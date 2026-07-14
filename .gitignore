@@ -1,0 +1,4 @@
+# Arquivo: .gitignore
+__pycache__/
+*.pyc
+LIBS_PROCESSADOS_CSV/
