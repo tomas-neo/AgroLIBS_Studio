@@ -9,6 +9,9 @@ import pandas as pd
 from modulos.pre_processador import filtrar_ruido, remover_baseline, normalizar_por_area, carregar_arquivo_esf
 from modulos.motor_pca import executar_pca_arquivos
 
+from modulos.motor_pca import executar_pca_arquivos
+from modulos.motor_outliers import executar_caca_outliers # <--- ADICIONE ESTA LINHA
+
 # Configuração Visual
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
@@ -25,6 +28,7 @@ tabview.pack(pady=10, padx=20, fill="both", expand=True)
 
 aba_pre = tabview.add("1. Pré-processamento")
 aba_pca = tabview.add("2. Análise PCA")
+aba_outliers = tabview.add("3. Caçador de Outliers") # <--- ADICIONE ESTA LINHA
 
 # ==============================================================================
 # LÓGICA E INTERFACE DA ABA 1: PRÉ-PROCESSAMENTO
@@ -171,5 +175,56 @@ botao_gerar_pca.pack(pady=20)
 
 label_status_pca = ctk.CTkLabel(aba_pca, text="", text_color="gray")
 label_status_pca.pack()
+
+
+# ==============================================================================
+# LÓGICA E INTERFACE DA ABA 3: CAÇADOR DE OUTLIERS
+# ==============================================================================
+arquivos_outliers_selecionados = []
+
+def escolher_pasta_outliers():
+    global arquivos_outliers_selecionados
+    pasta = filedialog.askdirectory(title="Selecione a pasta com os resultados .csv")
+    if pasta:
+        arquivos = [os.path.join(pasta, f) for f in os.listdir(pasta) if f.endswith('.csv')]
+        if len(arquivos) >= 3:
+            arquivos_outliers_selecionados = arquivos
+            label_status_out.configure(text=f"✅ {len(arquivos)} arquivos carregados.", text_color="green")
+            botao_gerar_out.configure(state="normal")
+        else:
+            label_status_out.configure(text="⚠️ Arquivos insuficientes (Mínimo 3).", text_color="red")
+
+def acionar_motor_outliers():
+    try:
+        texto_log_out.delete("1.0", "end")
+        texto_log_out.insert("end", "Calculando matriz de distâncias Z-Score...\n")
+        
+        # Chama o motor matemático
+        qtd, lista_ruins = executar_caca_outliers(arquivos_outliers_selecionados)
+        
+        texto_log_out.insert("end", f"\nFim da varredura! {qtd} outliers encontrados.\n")
+        if qtd > 0:
+            texto_log_out.insert("end", "Amostras defeituosas:\n")
+            for ruim in lista_ruins:
+                texto_log_out.insert("end", f" -> {ruim}\n")
+    except Exception as e:
+        label_status_out.configure(text=f"Erro: {str(e)}", text_color="red")
+
+titulo_out = ctk.CTkLabel(aba_outliers, text="Rastreamento de Anomalias (Z-Score)", font=ctk.CTkFont(size=18, weight="bold"))
+titulo_out.pack(pady=10)
+
+botao_selecionar_out = ctk.CTkButton(aba_outliers, text="📁 Selecionar Pasta com .csv", command=escolher_pasta_outliers)
+botao_selecionar_out.pack(pady=10)
+
+label_status_out = ctk.CTkLabel(aba_outliers, text="Nenhuma pasta selecionada.", text_color="gray")
+label_status_out.pack()
+
+botao_gerar_out = ctk.CTkButton(aba_outliers, text="🎯 Iniciar Caçada a Outliers", command=acionar_motor_outliers, state="disabled", fg_color="#c0392b", hover_color="#e74c3c")
+botao_gerar_out.pack(pady=20)
+
+texto_log_out = ctk.CTkTextbox(aba_outliers, height=150)
+texto_log_out.pack(fill="x", padx=20, pady=5)
+
+
 
 janela.mainloop()
