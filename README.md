@@ -1,6 +1,6 @@
 # AgroLIBS Studio 
 
-**AgroLIBS Studio** é uma aplicação desktop desenvolvida em Python para o pré-processamento e análise quimiométrica de espectros obtidos via Espectroscopia de Plasma Induzido por Laser (LIBS). O foco primário do software é a caracterização da variabilidade elementar de fertilizantes comerciais.
+AgroLIBS Studio é uma aplicação desktop desenvolvida em Python para o pré-processamento e análise quimiométrica de espectros obtidos via Espectroscopia de Plasma Induzido por Laser (LIBS). O foco primário do software é a caracterização da variabilidade elementar de fertilizantes comerciais.
 
 Este projeto foi desenvolvido com uma arquitetura modular, separando a interface gráfica dos motores matemáticos, garantindo alta performance e facilidade de manutenção.
 
