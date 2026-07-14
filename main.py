@@ -10,7 +10,9 @@ from modulos.pre_processador import filtrar_ruido, remover_baseline, normalizar_
 from modulos.motor_pca import executar_pca_arquivos
 
 from modulos.motor_pca import executar_pca_arquivos
-from modulos.motor_outliers import executar_caca_outliers # <--- ADICIONE ESTA LINHA
+from modulos.motor_outliers import executar_caca_outliers
+
+from modulos.motor_variancia import executar_curva_variancia
 
 # Configuração Visual
 ctk.set_appearance_mode("Dark")
@@ -28,7 +30,8 @@ tabview.pack(pady=10, padx=20, fill="both", expand=True)
 
 aba_pre = tabview.add("1. Pré-processamento")
 aba_pca = tabview.add("2. Análise PCA")
-aba_outliers = tabview.add("3. Caçador de Outliers") # <--- ADICIONE ESTA LINHA
+aba_outliers = tabview.add("3. Caçador de Outliers")
+aba_variancia = tabview.add("4. Curva de Variância")
 
 # ==============================================================================
 # LÓGICA E INTERFACE DA ABA 1: PRÉ-PROCESSAMENTO
@@ -225,6 +228,44 @@ botao_gerar_out.pack(pady=20)
 texto_log_out = ctk.CTkTextbox(aba_outliers, height=150)
 texto_log_out.pack(fill="x", padx=20, pady=5)
 
+
+# ==============================================================================
+# LÓGICA E INTERFACE DA ABA 4: CURVA DE VARIÂNCIA
+# ==============================================================================
+arquivos_var_selecionados = []
+
+def escolher_pasta_variancia():
+    global arquivos_var_selecionados
+    pasta = filedialog.askdirectory(title="Selecione a pasta com os resultados .csv")
+    if pasta:
+        arquivos = [os.path.join(pasta, f) for f in os.listdir(pasta) if f.endswith('.csv')]
+        if len(arquivos) >= 3:
+            arquivos_var_selecionados = arquivos
+            label_status_var.configure(text=f"✅ {len(arquivos)} ficheiros carregados.", text_color="green")
+            botao_gerar_var.configure(state="normal")
+        else:
+            label_status_var.configure(text="⚠️ Ficheiros insuficientes (Mínimo 3).", text_color="red")
+
+def acionar_motor_variancia():
+    try:
+        executar_curva_variancia(arquivos_var_selecionados)
+    except Exception as e:
+        label_status_var.configure(text=f"Erro: {str(e)}", text_color="red")
+
+titulo_var = ctk.CTkLabel(aba_variancia, text="Análise de Variância Explicada", font=ctk.CTkFont(size=18, weight="bold"))
+titulo_var.pack(pady=10)
+
+botao_selecionar_var = ctk.CTkButton(aba_variancia, text="📁 Selecionar Pasta com .csv", command=escolher_pasta_variancia)
+botao_selecionar_var.pack(pady=10)
+
+label_status_var = ctk.CTkLabel(aba_variancia, text="Nenhuma pasta selecionada.", text_color="gray")
+label_status_var.pack()
+
+texto_instrucao_var = ctk.CTkLabel(aba_variancia, text="O gráfico irá calcular quantos PCs são necessários\npara reter 95% da informação química original.", text_color="gray")
+texto_instrucao_var.pack(pady=20)
+
+botao_gerar_var = ctk.CTkButton(aba_variancia, text="📈 Gerar Curva de Variância", command=acionar_motor_variancia, state="disabled", fg_color="#2980b9", hover_color="#3498db")
+botao_gerar_var.pack(pady=20)
 
 
 janela.mainloop()
