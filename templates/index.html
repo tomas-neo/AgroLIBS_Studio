@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Experimento</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <h1>Bem-vindo ao Experimento de Equivalência!</h1>
+
+    <form action="/iniciar" method="POST">
+        <input type="text" name="id_participante" placeholder="ID do Participante (ex: P01)" required style="padding: 10px; font-size: 16px;">
+        <br><br>
+        <button type="submit" style="padding: 10px 20px; font-size: 16px; cursor: pointer;">Começar Experimento</button>
+    </form>
+</body>
+</html>

@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Teste em Andamento</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <h2>Fase: {{ fase }}</h2>
+    <p>Participante atual: {{ session['id_participante'] }}</p>
+
+    <div style="margin-top: 40px;">
+        <h3>Estímulo Modelo:</h3>
+        <button style="width: 120px; height: 120px; font-size: 28px; font-weight: bold;">{{ modelo }}</button>
+    </div>
+
+   <div style="margin-top: 50px;">
+        <h3>Escolha uma opção:</h3>
+        {% for comp in comparacoes %}
+            <a href="/responder/{{ comp }}" style="text-decoration: none;">
+                <button style="width: 120px; height: 120px; font-size: 28px; margin: 10px; font-weight: bold; cursor: pointer;">
+                    {{ comp }}
+                </button>
+            </a>
+        {% endfor %}
+    </div>
+</body>
+</html>
