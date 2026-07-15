@@ -1,4 +1,4 @@
-# AgroLIBS Studio 
+# AgroLIBS Studio
 
 **AgroLIBS Studio** é uma aplicação desktop desenvolvida em Python para o pré-processamento e análise quimiométrica de espectros obtidos via Espectroscopia de Plasma Induzido por Laser (LIBS). O foco primário do software é a caracterização da variabilidade elementar de fertilizantes comerciais.
 
@@ -6,11 +6,12 @@ Este projeto foi desenvolvido com uma arquitetura modular, separando a interface
 
 ---
 
-##  Funcionalidades
+## Funcionalidades
 
 O software é dividido em 4 abas principais, simulando um pipeline completo de Ciência de Dados para espectroscopia:
 
-1. **Pré-processamento de Dados:** * Leitura adaptativa de arquivos `.esf` brutos.
+1. **Pré-processamento de Dados:**
+   * Leitura adaptativa de arquivos `.esf` brutos.
    * Filtro Savitzky-Golay (suavização de ruídos).
    * Correção de Linha de Base (Baseline) por ajuste polinomial iterativo.
    * Normalização pela Área sob a curva.
@@ -31,7 +32,7 @@ O software é dividido em 4 abas principais, simulando um pipeline completo de C
 
 ---
 
-##  Tecnologias Utilizadas
+## Tecnologias Utilizadas
 
 * **Linguagem:** Python 3.13
 * **Interface Gráfica:** `customtkinter`
@@ -41,19 +42,28 @@ O software é dividido em 4 abas principais, simulando um pipeline completo de C
 
 ---
 
-##  Arquitetura do Projeto
+## Compatibilidade
 
-O código segue o princípio de Separação de Preocupações (Separation of Concerns), dividindo a UI da matemática pesada:
+Atualmente, o executável pré-compilado (`dist/`) foi gerado nativamente para **Linux (Debian/Ubuntu)**.
+
+* **Usuários Linux:** Podem utilizar o executável diretamente.
+* **Usuários Windows / macOS:** Devem executar o software através do código-fonte (Python 3.13) ou realizar um novo build (compilação) em suas respectivas máquinas utilizando o `PyInstaller`, seguindo as dependências listadas no arquivo `requirements.txt`.
+
+---
+
+## Arquitetura do Projeto
+
+O código segue o princípio de Separação de Preocupações (*Separation of Concerns*), dividindo a UI da matemática pesada:
 
 ```text
 AgroLIBS_Studio/
 │
-├── main.py                  # Cérebro da interface (Frontend CustomTkinter)
-├── requirements.txt         # Lista de dependências do projeto
-├── README.md                # Documentação
+├── main.py                # Cérebro da interface (Frontend CustomTkinter)
+├── requirements.txt       # Lista de dependências do projeto
+├── README.md              # Documentação
 │
-└── modulos/                 # Motores matemáticos (Backend)
-    ├── pre_processador.py   # Lógica de Savitzky-Golay, Baseline e Leitura
-    ├── motor_pca.py         # Cálculos de Componentes Principais
-    ├── motor_outliers.py    # Estatística Z-Score para anomalias
-    └──
+└── modulos/               # Motores matemáticos (Backend)
+    ├── pre_processador.py # Lógica de Savitzky-Golay, Baseline e Leitura
+    ├── motor_pca.py       # Cálculos de Componentes Principais
+    ├── motor_outliers.py  # Estatística Z-Score para anomalias
+    └── motor_variancia.py # Cálculo da variância acumulada
