@@ -2,3 +2,8 @@
 __pycache__/
 *.pyc
 LIBS_PROCESSADOS_CSV/
+
+# Pastas de Build (PyInstaller)
+build/
+dist/
+*.spec
