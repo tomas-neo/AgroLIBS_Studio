@@ -1,70 +1,58 @@
-# Ficheiro: modulos/motor_variancia.py
+# Arquivo: modulos/motor_variancia.py
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
-import os
+import matplotlib.pyplot as plt
 
-def executar_curva_variancia(lista_caminhos):
-    """Lê os ficheiros, calcula a PCA e plota a variância explicada acumulada."""
-    if len(lista_caminhos) < 3:
-        raise ValueError("Selecione pelo menos 3 ficheiros para calcular a variância.")
-
-    matriz_X = []
-    tamanho_padrao = None
-
-    for caminho in lista_caminhos:
-        df = pd.read_csv(caminho)
-        espectro = df['intensidade_processada'].values
+def executar_curva_variancia(lista_arquivos_csv):
+    """
+    Lê os ficheiros .csv limpos, aplica a PCA e desenha a curva
+    de variância acumulada para descobrir quantos PCs são necessários.
+    """
+    dados = []
+    
+    # 1. Carregamento dos dados limpos
+    for arq in lista_arquivos_csv:
+        df = pd.read_csv(arq, sep=';')
+        dados.append(df['Intensidade'].values)
         
-        if tamanho_padrao is None:
-            tamanho_padrao = len(espectro)
-        elif len(espectro) != tamanho_padrao:
-            continue
-            
-        matriz_X.append(espectro)
-
-    matriz_X = np.array(matriz_X)
-
-    # Matemática da Variância
+    matriz_dados = np.array(dados)
+    
+    # 2. Padronização
     scaler = StandardScaler()
-    X_escalonado = scaler.fit_transform(matriz_X)
-
-    # Não podemos pedir mais PCs do que o número de amostras
-    n_comp = min(20, len(matriz_X)) 
-    pca = PCA(n_components=n_comp)
-    pca.fit(X_escalonado)
+    dados_padronizados = scaler.fit_transform(matriz_dados)
     
-    var_explicada = pca.explained_variance_ratio_ * 100
-    var_acumulada = np.cumsum(var_explicada)
-
-    # Desenhando o Gráfico
-    plt.figure(figsize=(10, 6))
-    indices = np.arange(1, n_comp + 1)
-    plt.plot(indices, var_acumulada, marker='o', color='#3b2c85', linewidth=2, markersize=8)
-
-    # Destaca o ponto onde atingimos 95% de explicação
-    limite_95 = np.where(var_acumulada >= 95)[0]
-    if len(limite_95) > 0:
-        pc_alvo = limite_95[0] + 1
-        val_alvo = var_acumulada[limite_95[0]]
-        
-        plt.axvline(x=pc_alvo, color='#cc3333', linestyle='--', linewidth=1.5)
-        plt.axhline(y=val_alvo, color='#cc3333', linestyle='--', linewidth=1.5)
-        
-        plt.annotate(f'PCA{pc_alvo}\n({val_alvo:.1f}%)',
-                     xy=(pc_alvo, val_alvo),
-                     xytext=(pc_alvo - 3, val_alvo + 2.5),
-                     arrowprops=dict(facecolor='#cc3333', edgecolor='#cc3333', shrink=0.05, width=2, headwidth=8),
-                     color='#cc3333', fontsize=12, fontweight='bold', ha='center')
-
-    plt.title('📈 Variância Explicada Acumulada - PCA', fontsize=14, fontweight='bold')
-    plt.xlabel('Índices dos Componentes Principais (PCs)', fontsize=12)
-    plt.ylabel('% Variância Explicada Acumulada', fontsize=12)
+    # 3. O Motor PCA (Sem limite de componentes para ver o todo)
+    pca = PCA()
+    pca.fit(dados_padronizados)
     
-    plt.xticks(indices)
-    plt.grid(True, linestyle='-', alpha=0.6)
-    plt.ylim(0, 105)
+    # 4. A Matemática da Variância
+    # np.cumsum soma as percentagens em cascata (ex: PC1=60%, PC2=20% -> Acumulado=80%)
+    variancia_acumulada = np.cumsum(pca.explained_variance_ratio_) * 100
+    
+    # Descobre matematicamente onde cruzamos a linha dos 95%
+    limite = 95.0
+    num_pcs_95 = np.argmax(variancia_acumulada >= limite) + 1
+    
+    # 5. O Gráfico Analítico
+    plt.figure(figsize=(8, 5))
+    plt.plot(range(1, len(variancia_acumulada) + 1), variancia_acumulada, 
+             marker='o', linestyle='-', color='#2980b9', linewidth=2)
+    
+    # Desenha a linha de meta (95%) e a linha vertical onde a cruzamos
+    plt.axhline(y=limite, color='r', linestyle='--', label=f'Meta de {limite}% de Informação')
+    plt.axvline(x=num_pcs_95, color='g', linestyle='--', label=f'{num_pcs_95} PCs necessários')
+    
+    plt.title('Curva de Variância Acumulada - AgroLIBS', fontsize=14, fontweight='bold')
+    plt.xlabel('Número de Componentes Principais (PCs)', fontsize=12)
+    plt.ylabel('Variância Explicada Acumulada (%)', fontsize=12)
+    
+    # Coloca os números exatos em cima das bolinhas (até ao limite de 10 PCs para não poluir)
+    for i, var in enumerate(variancia_acumulada[:10]):
+        plt.text(i + 1, var + 1.5, f'{var:.1f}%', ha='center', fontsize=9)
+
+    plt.legend(loc='lower right')
+    plt.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.show()

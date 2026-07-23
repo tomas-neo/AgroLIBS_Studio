@@ -1,17 +1,17 @@
 # Arquivo: main.py
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
 import customtkinter as ctk
 from tkinter import filedialog
-import os
-import matplotlib.pyplot as plt
-import pandas as pd
+import threading
+
 
 # Importando nossos motores matemáticos
-from modulos.pre_processador import filtrar_ruido, remover_baseline, normalizar_por_area, carregar_arquivo_esf
-from modulos.motor_pca import executar_pca_arquivos
-
+from modulos.conversor_arquivos import converter_pasta_esf_para_csv # O NOSSO NOVO MOTOR!
+from modulos.pre_processador import carregar_arquivo_esf, filtrar_ruido, remover_baseline, normalizar_por_area, identificar_picos_npk
 from modulos.motor_pca import executar_pca_arquivos
 from modulos.motor_outliers import executar_caca_outliers
-
 from modulos.motor_variancia import executar_curva_variancia
 
 # Configuração Visual
@@ -28,100 +28,225 @@ janela.geometry("700x750")
 tabview = ctk.CTkTabview(janela, width=650)
 tabview.pack(pady=10, padx=20, fill="both", expand=True)
 
-aba_pre = tabview.add("1. Pré-processamento")
+# Agora voltamos a ter 4 abas, mas muito mais poderosas!
+aba_pre_conv = tabview.add("1. Pré-processamento & Conversão")
 aba_pca = tabview.add("2. Análise PCA")
 aba_outliers = tabview.add("3. Caçador de Outliers")
 aba_variancia = tabview.add("4. Curva de Variância")
 
 # ==============================================================================
-# LÓGICA E INTERFACE DA ABA 1: PRÉ-PROCESSAMENTO
+# LÓGICA E INTERFACE DA ABA 1: PRÉ-PROCESSAMENTO & CONVERSÃO
 # ==============================================================================
-pasta_selecionada = ""
-arquivos_esf_encontrados = []
+import threading
 
-def escolher_pasta():
-    global pasta_selecionada, arquivos_esf_encontrados
-    pasta = filedialog.askdirectory(title="Selecione a pasta com os .esf")
+pasta_origem_selecionada = ""
+mapa_arquivos_esf = {} # Dicionário para guardar Nome -> Caminho Completo
+
+def atualizar_terminal(mensagem):
+    terminal_conversao.insert("end", mensagem + "\n")
+    terminal_conversao.see("end") 
+
+def escolher_pasta_esf():
+    global pasta_origem_selecionada, mapa_arquivos_esf
+    pasta = filedialog.askdirectory(title="Selecione a pasta RAIZ com os .esf brutos")
+    
     if pasta:
-        pasta_selecionada = pasta
-        label_caminho.configure(text=f"Pasta: {pasta_selecionada}", text_color="green")
-        arquivos_esf_encontrados = [f for f in os.listdir(pasta) if f.endswith('.esf')]
-        if arquivos_esf_encontrados:
-            menu_amostras.configure(values=arquivos_esf_encontrados, state="normal")
-            menu_amostras.set(arquivos_esf_encontrados[0]) 
-            botao_preview.configure(state="normal")
-            botao_processar.configure(state="normal")
-            texto_log.insert("end", f"[{len(arquivos_esf_encontrados)}] arquivos .esf encontrados.\n")
-
-def processar_espectro(intensidade, wl):
-    intens_tratada = intensidade.copy()
-    sufixo = ""
-    if check_savgol.get() == 1:
-        intens_tratada = filtrar_ruido(intens_tratada)
-        sufixo += "_SG"
-    if check_baseline.get() == 1:
-        intens_tratada, _ = remover_baseline(intens_tratada)
-        sufixo += "_BL"
-    if check_normalizacao.get() == 1:
-        intens_tratada = normalizar_por_area(wl, intens_tratada)
-        sufixo += "_Norm"
-    if sufixo == "": sufixo = "_Bruto"
-    return intens_tratada, sufixo
-
-def testar_filtros_preview():
-    amostra = menu_amostras.get()
-    try:
-        wl, intens_bruta = carregar_arquivo_esf(os.path.join(pasta_selecionada, amostra))
-        intens_tratada, sufixo = processar_espectro(intens_bruta, wl)
+        pasta_origem_selecionada = pasta
+        mapa_arquivos_esf.clear()
         
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
-        ax1.plot(wl, intens_bruta, color='#7f8c8d')
-        ax1.set_title(f"Espectro Bruto: {amostra}")
-        ax2.plot(wl, intens_tratada, color='#2c3e50')
-        ax2.set_title(f"Espectro Tratado (Tags: {sufixo})")
+        # Usa o os.walk para encontrar os ficheiros
+        for root, dirs, files in os.walk(pasta):
+            for f in files:
+                if f.lower().endswith('.esf'):
+                    mapa_arquivos_esf[f] = os.path.join(root, f)
+        
+        nomes_ficheiros = list(mapa_arquivos_esf.keys())
+        
+        if nomes_ficheiros:
+            label_status_conv.configure(text=f"✅ {len(nomes_ficheiros)} ficheiros encontrados.", text_color="green")
+            
+            # A CORREÇÃO MÁGICA: Pega apenas nos 50 primeiros para o menu não bugar!
+            nomes_preview = nomes_ficheiros[:50]
+            
+            # Envia a lista limpa para o menu
+            menu_amostras.configure(values=nomes_preview, state="normal")
+            menu_amostras.set(nomes_preview[0]) 
+            
+            botao_preview.configure(state="normal")
+            botao_processar_tudo.configure(state="normal")
+        else:
+            label_status_conv.configure(text="⚠️ Nenhum .esf encontrado nas subpastas.", text_color="red")
+            botao_preview.configure(state="disabled")
+            botao_processar_tudo.configure(state="disabled")
+def testar_filtros_preview():
+    amostra_nome = menu_amostras.get()
+    caminho_completo = mapa_arquivos_esf.get(amostra_nome)
+    if not caminho_completo: return
+    
+    try:
+        # Carrega o bruto (agora o eixo X estará perfeitamente limpo!)
+        wl, intens_bruta = carregar_arquivo_esf(caminho_completo)
+        intens_tratada = intens_bruta.copy()
+        
+        tags = []
+        if check_savgol.get() == 1:
+            intens_tratada = filtrar_ruido(intens_tratada)
+            tags.append("SG")
+        if check_baseline.get() == 1:
+            intens_tratada, _ = remover_baseline(intens_tratada)
+            tags.append("BL")
+        if check_normalizacao.get() == 1:
+            intens_tratada = normalizar_por_area(wl, intens_tratada)
+            tags.append("Norm")
+            
+        titulo_tags = " + ".join(tags) if tags else "Nenhum Filtro"
+        
+        # Plota os gráficos com um visual mais científico
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 8), sharex=True)
+        
+        # 1. Gráfico Bruto
+        ax1.plot(wl, intens_bruta, color='#7f8c8d', linewidth=0.8, alpha=0.9)
+        ax1.set_title(f"Espectro Bruto Original: {amostra_nome}", fontweight='bold')
+        ax1.grid(True, linestyle=':', alpha=0.6)
+        
+        # 2. Gráfico Tratado
+        ax2.plot(wl, intens_tratada, color='#2c3e50', linewidth=1)
+        ax2.set_title(f"Espectro Tratado ({titulo_tags}) com Mapeamento NPK", fontweight='bold')
+        ax2.set_xlabel("Comprimento de Onda (nm)")
+        ax2.grid(True, linestyle=':', alpha=0.6)
+        
+        # A MAGIA VOLTOU: Desenhando os picos NPK no gráfico tratado!
+        picos_npk = identificar_picos_npk(wl, intens_tratada)
+        ELEMENTS_COLORS = {'N': '#3498db', 'P': '#e67e22', 'K': '#9b59b6'}
+        elementos_vistos = set()
+        
+        for pico in picos_npk:
+            elem = pico['elemento']
+            label = f"Linha de {elem}" if elem not in elementos_vistos else ""
+            elementos_vistos.add(elem)
+            
+            # Linha pontilhada e bolinha colorida
+            ax2.axvline(x=pico['w_medido'], color=ELEMENTS_COLORS[elem], linestyle=':', alpha=0.6)
+            ax2.scatter(pico['w_medido'], pico['intensidade'], color=ELEMENTS_COLORS[elem], s=45, zorder=5, label=label)
+            
+            # Texto indicando o elemento
+            texto = f"{elem}\n{pico['w_medido']:.1f}"
+            ax2.annotate(texto, xy=(pico['w_medido'], pico['intensidade']), xytext=(4, 4),
+                         textcoords='offset points', fontsize=8, fontweight='bold', color=ELEMENTS_COLORS[elem])
+        
+        # Só mostra a legenda se algum elemento for encontrado
+        if elementos_vistos:
+            ax2.legend(loc='upper right')
+        
+        plt.tight_layout()
         plt.show() 
+        
     except Exception as e:
-        texto_log.insert("end", f"Erro no preview: {str(e)}\n")
-
-def executar_processamento_lote():
-    pasta_saida = os.path.join(pasta_selecionada, "LIBS_PROCESSADOS_CSV")
-    os.makedirs(pasta_saida, exist_ok=True)
-    sucessos = 0
-    for arquivo in arquivos_esf_encontrados:
+        atualizar_terminal(f"Erro no preview: {str(e)}")
+        
+        
+def iniciar_processamento_em_lote():
+    if not pasta_origem_selecionada: return 
+    
+    terminal_conversao.delete("1.0", "end")
+    
+    pasta_pai = os.path.dirname(pasta_origem_selecionada)
+    nome_pasta_origem = os.path.basename(pasta_origem_selecionada)
+    pasta_destino = os.path.join(pasta_pai, f"{nome_pasta_origem}_CSV_Tratados")
+    
+    usa_sg = bool(check_savgol.get())
+    usa_bl = bool(check_baseline.get())
+    usa_norm = bool(check_normalizacao.get())
+    
+    label_status_conv.configure(text="A processar em segundo plano...", text_color="orange")
+    botao_processar_tudo.configure(state="disabled") 
+    
+    def tarefa_pesada():
         try:
-            wl, intens_bruta = carregar_arquivo_esf(os.path.join(pasta_selecionada, arquivo))
-            intens_final, sufixo = processar_espectro(intens_bruta, wl)
-            nome_final = f"{os.path.splitext(arquivo)[0]}{sufixo}.csv"
-            pd.DataFrame({'comprimento_onda_nm': wl, 'intensidade_processada': intens_final}).to_csv(os.path.join(pasta_saida, nome_final), index=False)
-            sucessos += 1
-        except Exception: continue
-    texto_log.insert("end", f"✅ {sucessos} arquivos salvos em LIBS_PROCESSADOS_CSV\n")
+            sucesso, falhas, msg = converter_pasta_esf_para_csv(
+                pasta_origem_selecionada, pasta_destino, 
+                usar_sg=usa_sg, usar_baseline=usa_bl, usar_norm=usa_norm, 
+                callback=atualizar_terminal
+            )
+            
+            # Usamos o .after() para forçar a thread principal a atualizar os textos em segurança!
+            janela.after(0, lambda: label_status_conv.configure(
+                text=f"✅ Salvo em: {nome_pasta_origem}_CSV_Tratados", 
+                text_color="green" if falhas == 0 else "red"
+            ))
+        except Exception as e:
+            janela.after(0, lambda: [
+                atualizar_terminal(f"\n❌ ERRO FATAL: {str(e)}"),
+                label_status_conv.configure(text="Erro no processamento.", text_color="red")
+            ])
+        finally:
+            # Liberta o botão de forma segura na thread principal
+            janela.after(0, lambda: botao_processar_tudo.configure(state="normal"))
 
-# Layout da Aba 1
-botao_pasta = ctk.CTkButton(aba_pre, text="📁 1. Selecionar Pasta dos .esf", command=escolher_pasta)
-botao_pasta.pack(pady=10)
-label_caminho = ctk.CTkLabel(aba_pre, text="Nenhuma pasta selecionada.", text_color="gray")
-label_caminho.pack()
+    threading.Thread(target=tarefa_pesada, daemon=True).start()    
+    def tarefa_pesada():
+        try:
+            # Envia as escolhas das checkboxes para o motor!
+            sucesso, falhas, msg = converter_pasta_esf_para_csv(
+                pasta_origem_selecionada, pasta_destino, 
+                usar_sg=usa_sg, usar_baseline=usa_bl, usar_norm=usa_norm, 
+                callback=atualizar_terminal
+            )
+            cor = "green" if falhas == 0 else "red"
+            label_status_conv.configure(text=f"✅ Salvo em: {nome_pasta_origem}_CSV_Tratados", text_color=cor)
+        except Exception as e:
+            atualizar_terminal(f"\n❌ ERRO FATAL: {str(e)}")
+            label_status_conv.configure(text="Erro no processamento.", text_color="red")
+        finally:
+            botao_processar_tudo.configure(state="normal") 
 
-menu_amostras = ctk.CTkOptionMenu(aba_pre, values=["Aguardando..."], state="disabled")
-menu_amostras.pack(pady=5)
-botao_preview = ctk.CTkButton(aba_pre, text="👁️ 2. Preview de Filtros", command=testar_filtros_preview, state="disabled")
-botao_preview.pack(pady=5)
+    threading.Thread(target=tarefa_pesada, daemon=True).start()
 
-check_savgol = ctk.CTkCheckBox(aba_pre, text="Filtro Savitzky-Golay")
-check_savgol.pack(pady=5)
+# --- Layout da Aba 1 (Fusão) ---
+frame_topo = ctk.CTkFrame(aba_pre_conv, fg_color="transparent")
+frame_topo.pack(pady=5, fill="x")
+
+botao_pasta = ctk.CTkButton(frame_topo, text="📁 1. Selecionar Pasta Raiz (.esf)", command=escolher_pasta_esf)
+botao_pasta.pack(side="left", padx=20)
+
+label_status_conv = ctk.CTkLabel(frame_topo, text="Nenhuma pasta selecionada.", text_color="gray")
+label_status_conv.pack(side="left", padx=10)
+
+# Painel Central: Preview e Filtros
+frame_filtros = ctk.CTkFrame(aba_pre_conv)
+frame_filtros.pack(pady=10, padx=20, fill="x")
+
+ctk.CTkLabel(frame_filtros, text="Amostra para Preview:", font=("Arial", 12, "bold")).grid(row=0, column=0, padx=10, pady=10)
+
+# Adicionámos o dynamic_resizing=False e aumentámos a largura (width) para 250
+menu_amostras = ctk.CTkOptionMenu(frame_filtros, values=["Aguardando..."], state="disabled", width=250)
+
+menu_amostras.grid(row=0, column=1, padx=10, pady=10)
+
+botao_preview = ctk.CTkButton(frame_filtros, text="👁️ 2. Ver Gráfico Antes/Depois", command=testar_filtros_preview, state="disabled", fg_color="#8e44ad", hover_color="#9b59b6")
+botao_preview.grid(row=0, column=2, padx=10, pady=10)
+
+check_savgol = ctk.CTkCheckBox(frame_filtros, text="Filtro Savitzky-Golay")
+check_savgol.grid(row=1, column=0, padx=10, pady=10, sticky="w")
 check_savgol.select() 
-check_baseline = ctk.CTkCheckBox(aba_pre, text="Correção Baseline")
-check_baseline.pack(pady=5)
+
+check_baseline = ctk.CTkCheckBox(frame_filtros, text="Correção Baseline")
+check_baseline.grid(row=1, column=1, padx=10, pady=10, sticky="w")
 check_baseline.select()
-check_normalizacao = ctk.CTkCheckBox(aba_pre, text="Normalização por Área")
-check_normalizacao.pack(pady=5)
+
+check_normalizacao = ctk.CTkCheckBox(frame_filtros, text="Normalização por Área")
+check_normalizacao.grid(row=1, column=2, padx=10, pady=10, sticky="w")
 check_normalizacao.select()
 
-botao_processar = ctk.CTkButton(aba_pre, text="▶️ 3. Salvar Lote (.csv)", command=executar_processamento_lote, state="disabled", fg_color="green")
-botao_processar.pack(pady=10)
-texto_log = ctk.CTkTextbox(aba_pre, height=80)
-texto_log.pack(fill="x", padx=10, pady=5)
+# Botão Final de Conversão
+botao_processar_tudo = ctk.CTkButton(aba_pre_conv, text="▶️ 3. Processar Lote Inteiro para .CSV", command=iniciar_processamento_em_lote, state="disabled", fg_color="#28a745", hover_color="#218838", height=40)
+botao_processar_tudo.pack(pady=10)
+
+# Terminal de Processamento
+label_terminal = ctk.CTkLabel(aba_pre_conv, text="Terminal de Processamento:", font=("Arial", 12, "italic"), text_color="gray")
+label_terminal.pack(anchor="w", padx=20)
+terminal_conversao = ctk.CTkTextbox(aba_pre_conv, height=180, fg_color="#0d0d0d", text_color="#00FF00", font=("Consolas", 12))
+terminal_conversao.pack(fill="both", expand=True, padx=20, pady=(0, 20))
 
 
 # ==============================================================================
@@ -132,22 +257,27 @@ arquivos_pca_selecionados = []
 def escolher_pasta_pca():
     global arquivos_pca_selecionados
     
-    pasta = filedialog.askdirectory(title="Selecione a pasta com os resultados .csv")
+    pasta = filedialog.askdirectory(title="Selecione a pasta RAIZ com os resultados .csv")
     
     if pasta:
-        arquivos_encontrados = [
-            os.path.join(pasta, f) for f in os.listdir(pasta) if f.endswith('.csv')
-        ]
+        arquivos_encontrados = []
+        # O os.walk entra em todas as subpastas procurando os CSVs
+        for root, dirs, files in os.walk(pasta):
+            for f in files:
+                if f.lower().endswith('.csv'):
+                    arquivos_encontrados.append(os.path.join(root, f))
         
         if len(arquivos_encontrados) >= 3:
             arquivos_pca_selecionados = arquivos_encontrados
             lista_pca_texto.delete("1.0", "end")
             
             for f in arquivos_pca_selecionados:
-                lista_pca_texto.insert("end", f"{os.path.basename(f)}\n")
+                # Mostra no ecrã a pasta mãe e o ficheiro, para o utilizador saber o que carregou
+                nome_pasta_mae = os.path.basename(os.path.dirname(f))
+                lista_pca_texto.insert("end", f"[{nome_pasta_mae}] {os.path.basename(f)}\n")
                 
             botao_gerar_pca.configure(state="normal")
-            label_status_pca.configure(text=f"✅ {len(arquivos_pca_selecionados)} arquivos carregados da pasta.", text_color="green")
+            label_status_pca.configure(text=f"✅ {len(arquivos_pca_selecionados)} arquivos carregados (Recursivo).", text_color="green")
         else:
             lista_pca_texto.delete("1.0", "end")
             lista_pca_texto.insert("end", "⚠️ Erro: A pasta selecionada não possui arquivos .csv suficientes (Mínimo: 3).\n")
@@ -181,9 +311,12 @@ label_status_pca.pack()
 
 
 # ==============================================================================
-# LÓGICA E INTERFACE DA ABA 3: CAÇADOR DE OUTLIERS
+# LÓGICA E INTERFACE DA ABA 3: CAÇADOR E EXTERMINADOR DE OUTLIERS
 # ==============================================================================
+import shutil # Biblioteca nativa do Python para mover/copiar ficheiros
+
 arquivos_outliers_selecionados = []
+arquivos_defeituosos_encontrados = [] # Nova lista para guardar os ficheiros ruins
 
 def escolher_pasta_outliers():
     global arquivos_outliers_selecionados
@@ -192,28 +325,61 @@ def escolher_pasta_outliers():
         arquivos = [os.path.join(pasta, f) for f in os.listdir(pasta) if f.endswith('.csv')]
         if len(arquivos) >= 3:
             arquivos_outliers_selecionados = arquivos
-            label_status_out.configure(text=f"✅ {len(arquivos)} arquivos carregados.", text_color="green")
+            label_status_out.configure(text=f"✅ {len(arquivos)} ficheiros carregados.", text_color="green")
             botao_gerar_out.configure(state="normal")
+            botao_quarentena.configure(state="disabled") # Bloqueia o botão de quarentena inicialmente
         else:
-            label_status_out.configure(text="⚠️ Arquivos insuficientes (Mínimo 3).", text_color="red")
+            label_status_out.configure(text="⚠️ Ficheiros insuficientes (Mínimo 3).", text_color="red")
 
 def acionar_motor_outliers():
+    global arquivos_defeituosos_encontrados
     try:
         texto_log_out.delete("1.0", "end")
-        texto_log_out.insert("end", "Calculando matriz de distâncias Z-Score...\n")
+        texto_log_out.insert("end", "A calcular a matriz de distâncias Z-Score...\n")
         
-        # Chama o motor matemático
         qtd, lista_ruins = executar_caca_outliers(arquivos_outliers_selecionados)
+        arquivos_defeituosos_encontrados = lista_ruins # Guarda na memória para usar na quarentena
         
         texto_log_out.insert("end", f"\nFim da varredura! {qtd} outliers encontrados.\n")
+        
         if qtd > 0:
-            texto_log_out.insert("end", "Amostras defeituosas:\n")
+            texto_log_out.insert("end", "Amostras defeituosas prontas para isolamento:\n")
             for ruim in lista_ruins:
-                texto_log_out.insert("end", f" -> {ruim}\n")
+                texto_log_out.insert("end", f" -> {os.path.basename(ruim)}\n")
+            
+            # MAGIA: Se encontrou erro, liberta o botão laranja da Quarentena!
+            botao_quarentena.configure(state="normal")
+        else:
+            botao_quarentena.configure(state="disabled")
+            
     except Exception as e:
         label_status_out.configure(text=f"Erro: {str(e)}", text_color="red")
 
-titulo_out = ctk.CTkLabel(aba_outliers, text="Rastreamento de Anomalias (Z-Score)", font=ctk.CTkFont(size=18, weight="bold"))
+def enviar_para_quarentena():
+    """Move os ficheiros maus para uma pasta separada, limpando o dataset."""
+    if not arquivos_defeituosos_encontrados: return
+    
+    # Descobre a pasta raiz onde os dados estão
+    pasta_base = os.path.dirname(arquivos_defeituosos_encontrados[0])
+    pasta_quarentena = os.path.join(pasta_base, "QUARENTENA_OUTLIERS")
+    
+    # Cria a pasta se não existir
+    os.makedirs(pasta_quarentena, exist_ok=True)
+    
+    sucesso = 0
+    for arq in arquivos_defeituosos_encontrados:
+        try:
+            # O 'shutil.move' arranca o ficheiro de um lugar e atira para o outro
+            shutil.move(arq, os.path.join(pasta_quarentena, os.path.basename(arq)))
+            sucesso += 1
+        except Exception:
+            pass
+            
+    texto_log_out.insert("end", f"\n✅ AÇÃO CONCLUÍDA!\n{sucesso} ficheiros foram isolados na pasta 'QUARENTENA_OUTLIERS'.\nEles já não contaminarão a sua PCA!")
+    botao_quarentena.configure(state="disabled") # Bloqueia o botão depois de limpar
+
+# --- Layout da Aba 4 ---
+titulo_out = ctk.CTkLabel(aba_outliers, text="Rastreamento e Isolamento de Anomalias", font=ctk.CTkFont(size=18, weight="bold"))
 titulo_out.pack(pady=10)
 
 botao_selecionar_out = ctk.CTkButton(aba_outliers, text="📁 Selecionar Pasta com .csv", command=escolher_pasta_outliers)
@@ -222,12 +388,16 @@ botao_selecionar_out.pack(pady=10)
 label_status_out = ctk.CTkLabel(aba_outliers, text="Nenhuma pasta selecionada.", text_color="gray")
 label_status_out.pack()
 
-botao_gerar_out = ctk.CTkButton(aba_outliers, text="🎯 Iniciar Caçada a Outliers", command=acionar_motor_outliers, state="disabled", fg_color="#c0392b", hover_color="#e74c3c")
-botao_gerar_out.pack(pady=20)
+# Botão Vermelho (Procurar)
+botao_gerar_out = ctk.CTkButton(aba_outliers, text="🎯 1. Rastrear Outliers", command=acionar_motor_outliers, state="disabled", fg_color="#c0392b", hover_color="#e74c3c")
+botao_gerar_out.pack(pady=10)
 
 texto_log_out = ctk.CTkTextbox(aba_outliers, height=150)
 texto_log_out.pack(fill="x", padx=20, pady=5)
 
+# Botão Laranja (Quarentena - Só acende se achar erros)
+botao_quarentena = ctk.CTkButton(aba_outliers, text="☣️ 2. Mover Outliers para Quarentena", command=enviar_para_quarentena, state="disabled", fg_color="#f39c12", hover_color="#d68910")
+botao_quarentena.pack(pady=10)
 
 # ==============================================================================
 # LÓGICA E INTERFACE DA ABA 4: CURVA DE VARIÂNCIA
@@ -268,4 +438,20 @@ botao_gerar_var = ctk.CTkButton(aba_variancia, text="📈 Gerar Curva de Variân
 botao_gerar_var.pack(pady=20)
 
 
-janela.mainloop()
+# ==============================================================================
+# ENCERRAMENTO SEGURO DA APLICAÇÃO
+# ==============================================================================
+def ao_fechar():
+    """Garante que a janela fecha de forma limpa, evitando lixo no terminal do Linux"""
+    try:
+        janela.quit()
+        janela.destroy()
+    except Exception:
+        pass
+
+# Intercepta o comando de fechar a janela (o 'X' do programa)
+janela.protocol("WM_DELETE_WINDOW", ao_fechar)
+
+# Executa o loop principal
+if __name__ == "__main__":
+    janela.mainloop()
