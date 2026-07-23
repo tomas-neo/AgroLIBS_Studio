@@ -322,15 +322,24 @@ def escolher_pasta_outliers():
     global arquivos_outliers_selecionados
     pasta = filedialog.askdirectory(title="Selecione a pasta com os resultados .csv")
     if pasta:
-        arquivos = [os.path.join(pasta, f) for f in os.listdir(pasta) if f.endswith('.csv')]
+        arquivos = []
+        for root, dirs, files in os.walk(pasta):
+            # O ESCUDO ANTI-ZUMBI
+            if "QUARENTENA" in root:
+                continue
+                
+            for f in files:
+                if f.lower().endswith('.csv'):
+                    arquivos.append(os.path.join(root, f))
+                    
         if len(arquivos) >= 3:
             arquivos_outliers_selecionados = arquivos
             label_status_out.configure(text=f"✅ {len(arquivos)} ficheiros carregados.", text_color="green")
             botao_gerar_out.configure(state="normal")
-            botao_quarentena.configure(state="disabled") # Bloqueia o botão de quarentena inicialmente
+            botao_quarentena.configure(state="disabled") 
         else:
             label_status_out.configure(text="⚠️ Ficheiros insuficientes (Mínimo 3).", text_color="red")
-
+            
 def acionar_motor_outliers():
     global arquivos_defeituosos_encontrados
     try:
@@ -356,27 +365,19 @@ def acionar_motor_outliers():
         label_status_out.configure(text=f"Erro: {str(e)}", text_color="red")
 
 def enviar_para_quarentena():
-    """Move os ficheiros maus para uma pasta separada, limpando o dataset."""
+    """Agora esta função vai APAGAR os ficheiros permanentemente!"""
     if not arquivos_defeituosos_encontrados: return
-    
-    # Descobre a pasta raiz onde os dados estão
-    pasta_base = os.path.dirname(arquivos_defeituosos_encontrados[0])
-    pasta_quarentena = os.path.join(pasta_base, "QUARENTENA_OUTLIERS")
-    
-    # Cria a pasta se não existir
-    os.makedirs(pasta_quarentena, exist_ok=True)
     
     sucesso = 0
     for arq in arquivos_defeituosos_encontrados:
         try:
-            # O 'shutil.move' arranca o ficheiro de um lugar e atira para o outro
-            shutil.move(arq, os.path.join(pasta_quarentena, os.path.basename(arq)))
+            os.remove(arq) # A MÁGICA MORTAL: Deleta o ficheiro para sempre do HD
             sucesso += 1
-        except Exception:
+        except Exception as e:
             pass
             
-    texto_log_out.insert("end", f"\n✅ AÇÃO CONCLUÍDA!\n{sucesso} ficheiros foram isolados na pasta 'QUARENTENA_OUTLIERS'.\nEles já não contaminarão a sua PCA!")
-    botao_quarentena.configure(state="disabled") # Bloqueia o botão depois de limpar
+    texto_log_out.insert("end", f"\n✅ EXTERMÍNIO CONCLUÍDO!\n{sucesso} ficheiros anómalos foram DELETADOS permanentemente.\nO seu dataset está 100% limpo!")
+    botao_quarentena.configure(state="disabled")
 
 # --- Layout da Aba 4 ---
 titulo_out = ctk.CTkLabel(aba_outliers, text="Rastreamento e Isolamento de Anomalias", font=ctk.CTkFont(size=18, weight="bold"))
@@ -395,8 +396,8 @@ botao_gerar_out.pack(pady=10)
 texto_log_out = ctk.CTkTextbox(aba_outliers, height=150)
 texto_log_out.pack(fill="x", padx=20, pady=5)
 
-# Botão Laranja (Quarentena - Só acende se achar erros)
-botao_quarentena = ctk.CTkButton(aba_outliers, text="☣️ 2. Mover Outliers para Quarentena", command=enviar_para_quarentena, state="disabled", fg_color="#f39c12", hover_color="#d68910")
+# Botão Vermelho (Excluir Permanentemente - Só acende se achar erros)
+botao_quarentena = ctk.CTkButton(aba_outliers, text="💀 2. DELETAR Outliers Permanentemente", command=enviar_para_quarentena, state="disabled", fg_color="#8b0000", hover_color="#ff0000")
 botao_quarentena.pack(pady=10)
 
 # ==============================================================================
@@ -408,7 +409,16 @@ def escolher_pasta_variancia():
     global arquivos_var_selecionados
     pasta = filedialog.askdirectory(title="Selecione a pasta com os resultados .csv")
     if pasta:
-        arquivos = [os.path.join(pasta, f) for f in os.listdir(pasta) if f.endswith('.csv')]
+        arquivos = []
+        for root, dirs, files in os.walk(pasta):
+            # O ESCUDO ANTI-ZUMBI
+            if "QUARENTENA" in root:
+                continue
+                
+            for f in files:
+                if f.lower().endswith('.csv'):
+                    arquivos.append(os.path.join(root, f))
+                    
         if len(arquivos) >= 3:
             arquivos_var_selecionados = arquivos
             label_status_var.configure(text=f"✅ {len(arquivos)} ficheiros carregados.", text_color="green")
