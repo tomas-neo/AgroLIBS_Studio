@@ -13,7 +13,7 @@ Este projeto foi desenvolvido com uma arquitetura modular, separando a interface
 * **Quarentena reversível:** os outliers são movidos para `QUARENTENA/` (com confirmação), e não apagados. O botão "Restaurar" desfaz.
 * **Mais rápido:** leitura do `.esf` com o leitor em C do pandas e escrita do `.csv` com 10 algarismos significativos (cerca de 2x mais rápido no lote), e os `.csv` lidos ficam em cache entre as abas.
 * **Nada congela:** PCA, outliers, variância e classificação rodam em segundo plano.
-* **Tema claro/escuro** no canto superior direito.
+* **Visual novo "Noite Azul"** (escuro, azul-marinho). As cores ficam em `modulos/tema.py`, que também tem os temas "Embrapa Verde", "Laboratório" e "Grafite Âmbar"; para trocar, mude `TEMA_PADRAO` ou rode `AGROLIBS_TEMA="Laboratório" python main.py`.
 
 ## 🚀 Novidades da Versão 2.0
 * **Exterminador por IA:** O antigo filtro Z-Score foi substituído pelo algoritmo de Machine Learning **Isolation Forest**, que previne o mascaramento estatístico de anomalias extremas.
@@ -91,6 +91,7 @@ AgroLIBS_Studio/
     ├── conversor_arquivos.py # Conversão em lote .esf -> .csv
     ├── dados.py           # Leitura dos .csv (UV/VIS, grupos, cache, quarentena)
     ├── graficos.py        # Todos os gráficos do app
+    ├── tema.py            # Cores da interface (temas)
     ├── motor_pca.py       # Cálculo do PCA (escores, variância, loadings)
     ├── motor_outliers.py  # Algoritmo Isolation Forest (Machine Learning)
     ├── motor_variancia.py # Cálculo da variância acumulada
