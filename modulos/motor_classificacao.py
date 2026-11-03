@@ -33,34 +33,13 @@ from sklearn.preprocessing import StandardScaler
 
 from modulos.pre_processador import ELEMENTS_WAVELENGTHS
 
-PASTAS_DE_REGIAO = {"uv", "vis"}
+# A leitura dos arquivos é a mesma das outras abas (modulos/dados.py)
+from modulos.dados import listar_csvs, pastas_do_caminho, ler_csv, carregar_espectros
 
 
 # ==============================================================================
-# 1. LEITURA DOS DADOS
+# 1. RÓTULOS E AMOSTRAS
 # ==============================================================================
-def listar_csvs(pasta_raiz, regiao):
-    """Lista os .csv de uma região ('UV' ou 'Vis'), ignorando a QUARENTENA."""
-    arquivos = []
-    for root, dirs, files in os.walk(pasta_raiz):
-        if "QUARENTENA" in root:
-            continue
-        for f in files:
-            if not f.lower().endswith(".csv"):
-                continue
-            caminho = os.path.join(root, f)
-            partes = os.path.relpath(caminho, pasta_raiz).replace("\\", "/").lower().split("/")
-            if regiao.lower() in partes[:-1]:
-                arquivos.append(caminho)
-    return sorted(arquivos)
-
-
-def pastas_do_caminho(caminho, pasta_raiz):
-    """Pastas entre a raiz e o arquivo, sem as pastas UV/VIS."""
-    partes = os.path.relpath(caminho, pasta_raiz).replace("\\", "/").split("/")[:-1]
-    return [p for p in partes if p.lower() not in PASTAS_DE_REGIAO]
-
-
 def opcoes_de_rotulo(arquivos, pasta_raiz):
     """
     Descobre quais níveis de pasta podem virar classe.
@@ -100,54 +79,19 @@ def amostra_do_arquivo(caminho, pasta_raiz):
     return "/".join(pastas + [id_amostra])
 
 
-def _ler_csv(caminho):
-    df = pd.read_csv(caminho, sep=";")
-    if len(df.columns) == 1:
-        df = pd.read_csv(caminho, sep=",")
-    col_x = next((c for c in df.columns if "onda" in c.lower() or "wave" in c.lower()), None)
-    col_y = next((c for c in df.columns if "intens" in c.lower()), None)
-    if col_y is None:
-        return None, None
-    y = df[col_y].to_numpy(dtype=float)
-    x = df[col_x].to_numpy(dtype=float) if col_x else np.arange(len(y), dtype=float)
-    return x, y
-
-
 def carregar_dataset(arquivos, pasta_raiz, nivel_rotulo, callback=None):
     """
     Monta a matriz X (espectros), y (classes) e grupos (amostra física).
-    Todos os espectros são interpolados no eixo de comprimento de onda do
-    primeiro arquivo, cortado na faixa comum a todos.
+    A leitura e o alinhamento do eixo ficam em dados.carregar_espectros
+    (com cache: se o PCA já leu esses arquivos, não lê de novo).
     """
-    espectros, rotulos, grupos, usados = [], [], [], []
+    com_rotulo = [a for a in arquivos if rotulo_do_arquivo(a, pasta_raiz, nivel_rotulo) is not None]
+    X, eixo, usados = carregar_espectros(com_rotulo, callback=callback)
+
     nomes_classe = {}  # 'maxgreen' -> 'MaxGreen' (junta grafias diferentes)
-
-    for i, arq in enumerate(arquivos):
-        rotulo = rotulo_do_arquivo(arq, pasta_raiz, nivel_rotulo)
-        if rotulo is None:
-            continue
-        x, y = _ler_csv(arq)
-        if y is None or len(y) < 10:
-            continue
-        ordem = np.argsort(x)
-        espectros.append((x[ordem], y[ordem]))
-        rotulos.append(nomes_classe.setdefault(rotulo.lower(), rotulo))
-        grupos.append(amostra_do_arquivo(arq, pasta_raiz))
-        usados.append(arq)
-        if callback and (i + 1) % 100 == 0:
-            callback(f"  ... {i + 1}/{len(arquivos)} arquivos lidos")
-
-    if not espectros:
-        raise ValueError("Nenhum espectro válido encontrado (falta coluna de intensidade?).")
-
-    inicio = max(x[0] for x, _ in espectros)
-    fim = min(x[-1] for x, _ in espectros)
-    x_ref = espectros[0][0]
-    eixo = x_ref[(x_ref >= inicio) & (x_ref <= fim)]
-    if len(eixo) < 10:
-        raise ValueError("Os espectros não têm uma faixa de comprimento de onda em comum.")
-
-    X = np.vstack([np.interp(eixo, x, y) for x, y in espectros])
+    rotulos = [nomes_classe.setdefault(r.lower(), r)
+               for r in (rotulo_do_arquivo(a, pasta_raiz, nivel_rotulo) for a in usados)]
+    grupos = [amostra_do_arquivo(a, pasta_raiz) for a in usados]
     return X, np.array(rotulos), np.array(grupos), eixo, usados
 
 
@@ -303,14 +247,15 @@ def classificar_pasta(pacote, pasta):
     if not arquivos:
         # Pasta sem subpastas UV/VIS: usa todos os .csv
         arquivos = sorted(os.path.join(r, f) for r, _, fs in os.walk(pasta)
-                          for f in fs if f.lower().endswith(".csv") and "QUARENTENA" not in r)
+                          for f in fs if f.lower().endswith(".csv") and "QUARENTENA" not in r
+                          and not f.lower().startswith("classificacao_"))
     if not arquivos:
         raise ValueError("Nenhum .csv encontrado na pasta.")
 
     eixo = pacote["eixo"]
     linhas, espectros = [], []
     for arq in arquivos:
-        x, y = _ler_csv(arq)
+        x, y = ler_csv(arq)
         if y is None:
             continue
         ordem = np.argsort(x)

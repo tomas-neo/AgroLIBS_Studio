@@ -1,4 +1,6 @@
 # Arquivo: modulos/pre_processador.py
+import io
+
 import numpy as np
 import pandas as pd
 from scipy.signal import savgol_filter, find_peaks
@@ -10,39 +12,56 @@ ELEMENTS_WAVELENGTHS = {
     'K': [766.49, 769.90, 404.72]
 }
 
-def carregar_arquivo_esf(caminho_arquivo):
-    dados_num = []
-    iniciou_dados = False
-    
+def _ler_secao_de_dados(caminho_arquivo):
+    """Devolve o texto que vem depois da linha '[data section]'."""
     with open(caminho_arquivo, 'r', encoding='utf-8', errors='ignore') as f:
-        for linha in f:
-            linha = linha.strip()
-            if not iniciou_dados:
-                if linha == '[data section]':
-                    iniciou_dados = True
+        texto = f.read()
+    marcador = texto.find('[data section]')
+    if marcador < 0:
+        raise ValueError("O arquivo não tem a seção [data section].")
+    return texto[marcador + len('[data section]'):]
+
+
+def _ler_linhas_devagar(texto):
+    """Leitura linha a linha (aceita vírgula decimal e linhas estranhas)."""
+    dados_num = []
+    for linha in texto.splitlines():
+        partes = linha.strip().split(';')
+        if len(partes) >= 3:
+            try:
+                wave = float(partes[0].replace(',', '.'))
+                intensity = float(partes[2].replace(',', '.'))
+            except ValueError:
                 continue
-            if not linha: continue
-            
-            partes = linha.split(';')
-            if len(partes) >= 3:
-                try:
-                    wave = float(partes[0].replace(',', '.'))
-                    intensity = float(partes[2].replace(',', '.'))
-                    if wave > 0:
-                        dados_num.append([wave, intensity])
-                except ValueError:
-                    continue
-                    
-    if len(dados_num) > 0:
-        df = pd.DataFrame(dados_num, columns=['lambda', 'intensidade'])
-        
+            if wave > 0:
+                dados_num.append([wave, intensity])
+    return pd.DataFrame(dados_num, columns=['lambda', 'intensidade'])
+
+
+def carregar_arquivo_esf(caminho_arquivo):
+    texto = _ler_secao_de_dados(caminho_arquivo)
+
+    # Caminho rápido: o leitor em C do pandas (cerca de 6x mais rápido que o laço em Python)
+    try:
+        df = pd.read_csv(io.StringIO(texto), sep=';', header=None, usecols=[0, 2],
+                         names=['lambda', 'intensidade'], engine='c',
+                         on_bad_lines='skip', skip_blank_lines=True)
+        df = df.apply(pd.to_numeric, errors='coerce').dropna()
+        df = df[df['lambda'] > 0]
+    except (ValueError, pd.errors.ParserError):
+        df = pd.DataFrame()
+    if df.empty:
+        # Arquivo com vírgula decimal ou formato diferente: usa a leitura antiga
+        df = _ler_linhas_devagar(texto)
+
+    if len(df) > 0:
         # O SEGREDO DO CÓDIGO DE BARRAS: Arredondar para 2 casas decimais antes de agrupar!
         # Isso força as lentes sobrepostas do Andor a encaixarem exatamente no mesmo número.
-        df['lambda'] = np.round(df['lambda'], 2)
-        
-        df_processado = df.groupby('lambda', as_index=False).mean()
-        return df_processado['lambda'].values, df_processado['intensidade'].values
-        
+        df['lambda'] = np.round(df['lambda'].to_numpy(dtype=float), 2)
+
+        df_processado = df.groupby('lambda', as_index=False, sort=True).mean()
+        return df_processado['lambda'].to_numpy(), df_processado['intensidade'].to_numpy(dtype=float)
+
     raise ValueError("Não foi possível extrair dados válidos da seção [data section].")
 
 def filtrar_ruido(intensidade, janela=11, ordem=2):
@@ -65,8 +84,12 @@ def remover_baseline(intensidade, grau=2, iteracoes=10):
     espectro_corrigido = intensidade - baseline_estimado
     return np.clip(espectro_corrigido, 0, None), baseline_estimado
 
+# np.trapezoid só existe no NumPy 2; no NumPy 1.x o nome era np.trapz
+_integral = getattr(np, 'trapezoid', None) or np.trapz
+
+
 def normalizar_por_area(comprimento_onda, intensidade):
-    area_total = np.trapezoid(intensidade, comprimento_onda)
+    area_total = _integral(intensidade, comprimento_onda)
     return intensidade / area_total if area_total != 0 else intensidade
 
 def identificar_picos_npk(comprimentos_onda, intensidades, tolerancia=1.0, prom_frac=0.003):
