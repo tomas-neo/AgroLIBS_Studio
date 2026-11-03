@@ -36,6 +36,14 @@ O software é dividido em 4 abas principais, simulando um pipeline completo de C
    * Cálculo de quantos Componentes Principais são necessários para reter a informação química original.
    * Gráfico de alto padrão (limitado a 20 PCs) com anotação automática do limite de 95% de variância.
 
+5. **Classificação Supervisionada (KNN e Random Forest):**
+   * A classe de cada espectro vem do nome de uma pasta (ex.: `Adulterado_25porcento` ou `MaxGreen`); o menu "Classificar por" mostra os níveis de pasta disponíveis.
+   * **KNN:** Padronização → PCA → KNN, com k e número de PCs ajustáveis, e curva de acurácia em função de k.
+   * **Random Forest:** direto no espectro, com gráfico da importância de cada comprimento de onda e marcação das linhas de N, P e K.
+   * Validação cruzada **agrupada por amostra física**: todos os disparos da `amostra_a` ficam juntos no treino ou no teste, para a acurácia não sair inflada.
+   * Matriz de confusão, relatório por classe e acurácia por amostra (voto da maioria dos disparos).
+   * Salvar/carregar o modelo (`.joblib`) e classificar uma pasta de amostras novas (gera um `.csv` com a classe prevista de cada espectro).
+
 ---
 
 ## 🛠️ Tecnologias Utilizadas
@@ -72,4 +80,5 @@ AgroLIBS_Studio/
     ├── pre_processador.py # Lógica de SG, Baseline e Mapeamento NPK
     ├── motor_pca.py       # Renderização Híbrida de Componentes Principais
     ├── motor_outliers.py  # Algoritmo Isolation Forest (Machine Learning)
-    └── motor_variancia.py # Cálculo e plotagem da variância acumulada
+    ├── motor_variancia.py # Cálculo e plotagem da variância acumulada
+    └── motor_classificacao.py # KNN e Random Forest com validação por amostra

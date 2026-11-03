@@ -13,6 +13,7 @@ from modulos.pre_processador import carregar_arquivo_esf, filtrar_ruido, remover
 from modulos.motor_pca import executar_pca_arquivos
 from modulos.motor_outliers import executar_caca_outliers
 from modulos.motor_variancia import executar_curva_variancia
+from modulos import motor_classificacao
 
 # Configuração Visual
 ctk.set_appearance_mode("Dark")
@@ -20,12 +21,12 @@ ctk.set_default_color_theme("blue")
 
 janela = ctk.CTk()
 janela.title("AgroLIBS Studio - Embrapa")
-janela.geometry("700x750") 
+janela.geometry("820x800") 
 
 # ==============================================================================
 # SISTEMA DE ABAS (TABS)
 # ==============================================================================
-tabview = ctk.CTkTabview(janela, width=650)
+tabview = ctk.CTkTabview(janela, width=780)
 tabview.pack(pady=10, padx=20, fill="both", expand=True)
 
 # Agora voltamos a ter 4 abas, mas muito mais poderosas!
@@ -33,6 +34,7 @@ aba_pre_conv = tabview.add("1. Pré-processamento & Conversão")
 aba_pca = tabview.add("2. Análise PCA")
 aba_outliers = tabview.add("3. Caçador de Outliers")
 aba_variancia = tabview.add("4. Curva de Variância")
+aba_classificacao = tabview.add("5. Classificação (KNN/RF)")
 
 # ==============================================================================
 # LÓGICA E INTERFACE DA ABA 1: PRÉ-PROCESSAMENTO & CONVERSÃO
@@ -175,30 +177,14 @@ def iniciar_processamento_em_lote():
                 text_color="green" if falhas == 0 else "red"
             ))
         except Exception as e:
+            erro = str(e)  # guarda a mensagem: 'e' deixa de existir quando o except termina
             janela.after(0, lambda: [
-                atualizar_terminal(f"\n❌ ERRO FATAL: {str(e)}"),
+                atualizar_terminal(f"\n❌ ERRO FATAL: {erro}"),
                 label_status_conv.configure(text="Erro no processamento.", text_color="red")
             ])
         finally:
             # Liberta o botão de forma segura na thread principal
             janela.after(0, lambda: botao_processar_tudo.configure(state="normal"))
-
-    threading.Thread(target=tarefa_pesada, daemon=True).start()    
-    def tarefa_pesada():
-        try:
-            # Envia as escolhas das checkboxes para o motor!
-            sucesso, falhas, msg = converter_pasta_esf_para_csv(
-                pasta_origem_selecionada, pasta_destino, 
-                usar_sg=usa_sg, usar_baseline=usa_bl, usar_norm=usa_norm, 
-                callback=atualizar_terminal
-            )
-            cor = "green" if falhas == 0 else "red"
-            label_status_conv.configure(text=f"✅ Salvo em: {nome_pasta_origem}_CSV_Tratados", text_color=cor)
-        except Exception as e:
-            atualizar_terminal(f"\n❌ ERRO FATAL: {str(e)}")
-            label_status_conv.configure(text="Erro no processamento.", text_color="red")
-        finally:
-            botao_processar_tudo.configure(state="normal") 
 
     threading.Thread(target=tarefa_pesada, daemon=True).start()
 
@@ -447,6 +433,287 @@ texto_instrucao_var.pack(pady=20)
 botao_gerar_var = ctk.CTkButton(aba_variancia, text="📈 Gerar Curva de Variância", command=acionar_motor_variancia, state="disabled", fg_color="#2980b9", hover_color="#3498db")
 botao_gerar_var.pack(pady=20)
 
+
+# ==============================================================================
+# LÓGICA E INTERFACE DA ABA 5: CLASSIFICAÇÃO SUPERVISIONADA (KNN / RANDOM FOREST)
+# ==============================================================================
+import numpy as np
+
+estado_clf = {
+    "pasta": "",
+    "arquivos": [],
+    "opcoes_rotulo": [],   # [(nivel, texto)]
+    "pacote": None,        # modelo treinado (ou carregado) pronto para usar
+    "relatorio": "",       # texto do último resultado (vai junto ao salvar)
+}
+
+def log_clf(msg):
+    """Escreve no terminal da aba 5 (seguro para chamar de outra thread)."""
+    def _escreve():
+        texto_log_clf.insert("end", msg + "\n")
+        texto_log_clf.see("end")
+    janela.after(0, _escreve)
+
+def regiao_clf():
+    return "UV" if menu_regiao_clf.get() == "UV" else "Vis"
+
+def atualizar_opcoes_clf(*_):
+    """Relê a pasta para a região escolhida e monta o menu 'Classificar por'."""
+    if not estado_clf["pasta"]:
+        return
+    arquivos = motor_classificacao.listar_csvs(estado_clf["pasta"], regiao_clf())
+    opcoes = motor_classificacao.opcoes_de_rotulo(arquivos, estado_clf["pasta"])
+    estado_clf["arquivos"] = arquivos
+    estado_clf["opcoes_rotulo"] = opcoes
+    if arquivos and opcoes:
+        textos = [t for _, t in opcoes]
+        menu_rotulo_clf.configure(values=textos, state="normal")
+        menu_rotulo_clf.set(textos[0])
+        botao_treinar_clf.configure(state="normal")
+        label_status_clf.configure(text=f"✅ {len(arquivos)} espectros {regiao_clf().upper()} encontrados.", text_color="green")
+    else:
+        menu_rotulo_clf.configure(values=["Nenhuma classe encontrada"], state="disabled")
+        menu_rotulo_clf.set("Nenhuma classe encontrada")
+        botao_treinar_clf.configure(state="disabled")
+        msg = "⚠️ Nenhum .csv nessa região." if not arquivos else "⚠️ Precisa de subpastas diferentes (ex.: uma por classe)."
+        label_status_clf.configure(text=msg, text_color="red")
+
+def escolher_pasta_clf():
+    pasta = filedialog.askdirectory(title="Selecione a pasta RAIZ com os .csv tratados (uma subpasta por classe)")
+    if pasta:
+        estado_clf["pasta"] = pasta
+        atualizar_opcoes_clf()
+
+def ler_inteiro(entrada, padrao, minimo=1):
+    try:
+        return max(minimo, int(entrada.get()))
+    except ValueError:
+        return padrao
+
+def mostrar_graficos_clf(res, pacote):
+    """Desenha os gráficos na thread principal (o matplotlib exige isso)."""
+    classes = res["classes"]
+    nome = "KNN" if res["tipo"] == "KNN" else "Random Forest"
+
+    # 1. Matriz de confusão
+    fig, ax = plt.subplots(figsize=(7, 6))
+    m = res["matriz"]
+    im = ax.imshow(m, cmap="Blues")
+    for i in range(len(classes)):
+        for j in range(len(classes)):
+            ax.text(j, i, m[i, j], ha="center", va="center",
+                    color="white" if m[i, j] > m.max() / 2 else "black", fontweight="bold")
+    ax.set_xticks(range(len(classes)), classes, rotation=30, ha="right")
+    ax.set_yticks(range(len(classes)), classes)
+    ax.set_xlabel("Classe prevista", fontweight="bold")
+    ax.set_ylabel("Classe verdadeira", fontweight="bold")
+    ax.set_title(f"Matriz de Confusão - {nome} ({regiao_clf().upper()})\n"
+                 f"Acurácia {res['acuracia']*100:.1f}% (validação cruzada por amostra, {res['n_folds']} folds)")
+    fig.colorbar(im, ax=ax, fraction=0.046)
+    fig.tight_layout()
+
+    # 2. KNN: acurácia em função de k
+    if res["curva_k"]:
+        fig2, ax2 = plt.subplots(figsize=(8, 5))
+        ks = list(res["curva_k"].keys())
+        acc = [v * 100 for v in res["curva_k"].values()]
+        ax2.plot(ks, acc, "o-", color="#2980b9")
+        k_escolhido = pacote["parametros"]["k"]
+        if k_escolhido in res["curva_k"]:
+            ax2.axvline(k_escolhido, color="#c0392b", linestyle=":", label=f"k usado = {k_escolhido}")
+            ax2.legend()
+        ax2.set_xlabel("Número de vizinhos (k)", fontweight="bold")
+        ax2.set_ylabel("Acurácia (%)", fontweight="bold")
+        ax2.set_title(f"KNN: Acurácia x k ({regiao_clf().upper()}, {pacote['parametros']['n_pcs']} PCs)")
+        ax2.grid(True, linestyle=":", alpha=0.6)
+        fig2.tight_layout()
+
+    # 3. Random Forest: importância de cada comprimento de onda
+    imp = motor_classificacao.importancia_rf(pacote)
+    if imp is not None:
+        eixo, importancias = imp
+        fig3, ax3 = plt.subplots(figsize=(11, 5))
+        ax3.plot(eixo, importancias, color="#2c3e50", linewidth=0.8)
+        cores = {"N": "#3498db", "P": "#e67e22", "K": "#9b59b6"}
+        vistos = set()
+        for el, linhas in motor_classificacao.ELEMENTS_WAVELENGTHS.items():
+            for wl in linhas:
+                if eixo[0] <= wl <= eixo[-1]:
+                    ax3.axvline(wl, color=cores[el], linestyle=":", alpha=0.7,
+                                label=f"Linha de {el}" if el not in vistos else "")
+                    vistos.add(el)
+        if vistos:
+            ax3.legend(loc="upper right")
+        ax3.set_xlabel("Comprimento de Onda (nm)", fontweight="bold")
+        ax3.set_ylabel("Importância (Gini)", fontweight="bold")
+        ax3.set_title(f"Random Forest: comprimentos de onda mais importantes ({regiao_clf().upper()})")
+        ax3.grid(True, linestyle=":", alpha=0.6)
+        fig3.tight_layout()
+
+    plt.show()
+
+def treinar_clf():
+    if not estado_clf["arquivos"]:
+        return
+    texto_rotulo = menu_rotulo_clf.get()
+    nivel = next(n for n, t in estado_clf["opcoes_rotulo"] if t == texto_rotulo)
+    tipo = "KNN" if seletor_modelo_clf.get() == "KNN" else "RF"
+    k = ler_inteiro(entrada_k_clf, 5)
+    n_pcs = ler_inteiro(entrada_pcs_clf, 10)
+    n_arvores = ler_inteiro(entrada_arvores_clf, 300)
+    pasta, arquivos, regiao = estado_clf["pasta"], estado_clf["arquivos"], regiao_clf()
+
+    texto_log_clf.delete("1.0", "end")
+    botao_treinar_clf.configure(state="disabled")
+    label_status_clf.configure(text="A treinar em segundo plano...", text_color="orange")
+
+    def tarefa():
+        try:
+            log_clf(f"Lendo {len(arquivos)} espectros {regiao.upper()}...")
+            X, y, grupos, eixo, _ = motor_classificacao.carregar_dataset(arquivos, pasta, nivel, callback=log_clf)
+            log_clf(f"Matriz de dados: {X.shape[0]} espectros x {X.shape[1]} comprimentos de onda")
+            log_clf(motor_classificacao.resumo_dataset(y, grupos))
+
+            nome = f"KNN (k={k}, {n_pcs} PCs)" if tipo == "KNN" else f"Random Forest ({n_arvores} árvores)"
+            log_clf(f"\nValidação cruzada agrupada por amostra - {nome}")
+            res = motor_classificacao.avaliar_modelo(X, y, grupos, tipo, k=k, n_pcs=n_pcs,
+                                                     n_arvores=n_arvores, callback=log_clf)
+            log_clf("Treinando o modelo final com todos os dados...")
+            pacote = motor_classificacao.treinar_modelo_final(X, y, tipo, eixo, regiao, nivel,
+                                                              k=k, n_pcs=n_pcs, n_arvores=n_arvores)
+
+            linhas = [
+                "=" * 60,
+                f"RESULTADO - {nome} - região {regiao.upper()}",
+                "=" * 60,
+                f"Acurácia por espectro: {res['acuracia']*100:.1f}%",
+                f"Acurácia por amostra (voto da maioria): {res['acuracia_por_amostra']*100:.1f}% "
+                f"({res['acertos_amostra']}/{res['total_amostras']} amostras)",
+                "",
+                res["relatorio"],
+            ]
+            if res["curva_k"]:
+                melhor_k = max(res["curva_k"], key=res["curva_k"].get)
+                linhas.append(f"Melhor k na curva: {melhor_k} ({res['curva_k'][melhor_k]*100:.1f}%)")
+            imp = motor_classificacao.importancia_rf(pacote)
+            if imp is not None:
+                linhas.append("Comprimentos de onda mais importantes:")
+                linhas.append(motor_classificacao.linhas_npk_proximas(*imp))
+            relatorio = "\n".join(linhas)
+            log_clf("\n" + relatorio)
+
+            def finalizar():
+                estado_clf["pacote"] = pacote
+                estado_clf["relatorio"] = relatorio
+                botao_salvar_clf.configure(state="normal")
+                botao_prever_clf.configure(state="normal")
+                label_status_clf.configure(text=f"✅ {nome}: {res['acuracia']*100:.1f}% de acurácia", text_color="green")
+                mostrar_graficos_clf(res, pacote)
+            janela.after(0, finalizar)
+        except Exception as e:
+            erro = str(e)
+            log_clf(f"\n❌ ERRO: {erro}")
+            janela.after(0, lambda: label_status_clf.configure(text="Erro no treino.", text_color="red"))
+        finally:
+            janela.after(0, lambda: botao_treinar_clf.configure(state="normal"))
+
+    threading.Thread(target=tarefa, daemon=True).start()
+
+def salvar_modelo_clf():
+    if not estado_clf["pacote"]:
+        return
+    caminho = filedialog.asksaveasfilename(title="Salvar modelo treinado", defaultextension=".joblib",
+                                           filetypes=[("Modelo AgroLIBS", "*.joblib")],
+                                           initialfile=f"modelo_{estado_clf['pacote']['tipo']}_{estado_clf['pacote']['regiao']}.joblib")
+    if caminho:
+        motor_classificacao.salvar_modelo(estado_clf["pacote"], caminho)
+        with open(os.path.splitext(caminho)[0] + "_relatorio.txt", "w", encoding="utf-8") as f:
+            f.write(estado_clf["relatorio"])
+        log_clf(f"\n💾 Modelo salvo em {caminho} (relatório .txt ao lado)")
+
+def carregar_modelo_clf():
+    caminho = filedialog.askopenfilename(title="Abrir modelo treinado", filetypes=[("Modelo AgroLIBS", "*.joblib")])
+    if caminho:
+        try:
+            pacote = motor_classificacao.carregar_modelo(caminho)
+            estado_clf["pacote"] = pacote
+            botao_prever_clf.configure(state="normal")
+            log_clf(f"\n📂 Modelo carregado: {pacote['tipo']} ({pacote['regiao'].upper()}) - {os.path.basename(caminho)}")
+        except Exception as e:
+            log_clf(f"\n❌ Não consegui abrir o modelo: {e}")
+
+def classificar_pasta_clf():
+    pacote = estado_clf["pacote"]
+    if not pacote:
+        return
+    pasta = filedialog.askdirectory(title=f"Pasta com os .csv das amostras novas ({pacote['regiao'].upper()})")
+    if not pasta:
+        return
+    try:
+        por_espectro, por_amostra = motor_classificacao.classificar_pasta(pacote, pasta)
+        destino = os.path.join(pasta, f"classificacao_{pacote['tipo']}_{pacote['regiao']}.csv")
+        por_espectro.to_csv(destino, sep=";", index=False)
+        log_clf(f"\n🔎 Classificação de {len(por_espectro)} espectros ({pacote['tipo']}):")
+        for _, linha in por_amostra.iterrows():
+            log_clf(f"  {linha['amostra']}: {linha['classe_final']} "
+                    f"({linha['votos_na_classe']}/{linha['disparos']} disparos)")
+        log_clf(f"Detalhe por espectro salvo em: {destino}")
+    except Exception as e:
+        log_clf(f"\n❌ ERRO ao classificar: {e}")
+
+# --- Layout da Aba 5 ---
+ctk.CTkLabel(aba_classificacao, text="Classificação Supervisionada (KNN / Random Forest)",
+             font=ctk.CTkFont(size=18, weight="bold")).pack(pady=(10, 5))
+
+frame_dados_clf = ctk.CTkFrame(aba_classificacao)
+frame_dados_clf.pack(pady=5, padx=20, fill="x")
+ctk.CTkButton(frame_dados_clf, text="📁 Selecionar Pasta com .csv", command=escolher_pasta_clf).grid(row=0, column=0, padx=10, pady=8)
+ctk.CTkLabel(frame_dados_clf, text="Região:").grid(row=0, column=1, padx=(10, 2), pady=8)
+menu_regiao_clf = ctk.CTkSegmentedButton(frame_dados_clf, values=["UV", "VIS"], command=atualizar_opcoes_clf)
+menu_regiao_clf.set("VIS")
+menu_regiao_clf.grid(row=0, column=2, padx=5, pady=8)
+label_status_clf = ctk.CTkLabel(frame_dados_clf, text="Nenhuma pasta selecionada.", text_color="gray")
+label_status_clf.grid(row=0, column=3, padx=10, pady=8)
+ctk.CTkLabel(frame_dados_clf, text="Classificar por:").grid(row=1, column=0, padx=10, pady=8, sticky="e")
+menu_rotulo_clf = ctk.CTkOptionMenu(frame_dados_clf, values=["Aguardando..."], state="disabled", width=480, dynamic_resizing=False)
+menu_rotulo_clf.grid(row=1, column=1, columnspan=3, padx=10, pady=8, sticky="w")
+
+frame_modelo_clf = ctk.CTkFrame(aba_classificacao)
+frame_modelo_clf.pack(pady=5, padx=20, fill="x")
+ctk.CTkLabel(frame_modelo_clf, text="Modelo:", font=("Arial", 12, "bold")).grid(row=0, column=0, padx=10, pady=8)
+seletor_modelo_clf = ctk.CTkSegmentedButton(frame_modelo_clf, values=["KNN", "Random Forest"])
+seletor_modelo_clf.set("KNN")
+seletor_modelo_clf.grid(row=0, column=1, columnspan=2, padx=10, pady=8, sticky="w")
+ctk.CTkLabel(frame_modelo_clf, text="k (vizinhos):").grid(row=1, column=0, padx=10, pady=5, sticky="e")
+entrada_k_clf = ctk.CTkEntry(frame_modelo_clf, width=60)
+entrada_k_clf.insert(0, "5")
+entrada_k_clf.grid(row=1, column=1, padx=5, pady=5, sticky="w")
+ctk.CTkLabel(frame_modelo_clf, text="Nº de PCs (KNN):").grid(row=1, column=2, padx=10, pady=5, sticky="e")
+entrada_pcs_clf = ctk.CTkEntry(frame_modelo_clf, width=60)
+entrada_pcs_clf.insert(0, "10")
+entrada_pcs_clf.grid(row=1, column=3, padx=5, pady=5, sticky="w")
+ctk.CTkLabel(frame_modelo_clf, text="Nº de árvores (RF):").grid(row=1, column=4, padx=10, pady=5, sticky="e")
+entrada_arvores_clf = ctk.CTkEntry(frame_modelo_clf, width=60)
+entrada_arvores_clf.insert(0, "300")
+entrada_arvores_clf.grid(row=1, column=5, padx=5, pady=5, sticky="w")
+
+frame_botoes_clf = ctk.CTkFrame(aba_classificacao, fg_color="transparent")
+frame_botoes_clf.pack(pady=8)
+botao_treinar_clf = ctk.CTkButton(frame_botoes_clf, text="🧠 Treinar e Avaliar", command=treinar_clf, state="disabled",
+                                  fg_color="#8e44ad", hover_color="#71368a")
+botao_treinar_clf.grid(row=0, column=0, padx=6)
+botao_salvar_clf = ctk.CTkButton(frame_botoes_clf, text="💾 Salvar Modelo", command=salvar_modelo_clf, state="disabled")
+botao_salvar_clf.grid(row=0, column=1, padx=6)
+ctk.CTkButton(frame_botoes_clf, text="📂 Carregar Modelo", command=carregar_modelo_clf).grid(row=0, column=2, padx=6)
+botao_prever_clf = ctk.CTkButton(frame_botoes_clf, text="🔎 Classificar Amostras Novas", command=classificar_pasta_clf,
+                                 state="disabled", fg_color="#27ae60", hover_color="#1e8449")
+botao_prever_clf.grid(row=0, column=3, padx=6)
+
+ctk.CTkLabel(aba_classificacao, text="A validação separa por amostra física: todos os disparos da mesma amostra ficam\n"
+                                     "juntos no treino ou no teste, para a acurácia não sair inflada.",
+             text_color="gray", font=("Arial", 11, "italic")).pack()
+texto_log_clf = ctk.CTkTextbox(aba_classificacao, height=260, fg_color="#0d0d0d", text_color="#00FF00", font=("Consolas", 12))
+texto_log_clf.pack(fill="both", expand=True, padx=20, pady=(5, 15))
 
 # ==============================================================================
 # ENCERRAMENTO SEGURO DA APLICAÇÃO
