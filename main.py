@@ -22,7 +22,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from matplotlib.figure import Figure  # noqa: E402
 import numpy as np  # noqa: E402
 
-from modulos import dados, graficos, motor_classificacao  # noqa: E402
+from modulos import dados, graficos, motor_classificacao, tema  # noqa: E402
 from modulos.conversor_arquivos import converter_pasta_esf_para_csv, listar_esf, tratar_espectro  # noqa: E402
 from modulos.pre_processador import carregar_arquivo_esf, identificar_picos_npk  # noqa: E402
 from modulos.motor_pca import calcular_pca  # noqa: E402
@@ -31,16 +31,21 @@ from modulos.motor_variancia import calcular_variancia  # noqa: E402
 
 VERSAO = "2.1"
 
-# Cores do app (as mesmas dos botões antigos, para manter a identidade)
-VERDE = ("#28a745", "#218838")
-ROXO = ("#8e44ad", "#71368a")
-AZUL = ("#2980b9", "#3498db")
-VERMELHO = ("#c0392b", "#e74c3c")
-LARANJA = ("#d35400", "#e67e22")
-COR_OK, COR_ERRO, COR_AVISO, COR_NEUTRA = "#2ecc71", "#e74c3c", "#f39c12", "gray"
+# Cores: vêm do tema (modulos/tema.py). Para testar outro: AGROLIBS_TEMA="Noite Azul" python main.py
+T = tema.aplicar(os.environ.get("AGROLIBS_TEMA"))
 
-ctk.set_appearance_mode("Dark")
-ctk.set_default_color_theme("blue")
+
+def _escurecer(cor, fator=0.82):
+    r, g, b = (int(cor[i:i + 2], 16) for i in (1, 3, 5))
+    return "#%02x%02x%02x" % (int(r * fator), int(g * fator), int(b * fator))
+
+
+PRIMARIA = (T["primaria"], T["hover"])
+VERDE = (T["sucesso"], _escurecer(T["sucesso"]))
+VERMELHO = (T["perigo"], _escurecer(T["perigo"]))
+LARANJA = (T["alerta"], _escurecer(T["alerta"]))
+COR_OK, COR_ERRO, COR_AVISO, COR_NEUTRA = T["sucesso"], T["perigo"], T["alerta"], T["suave"]
+
 graficos.aplicar_estilo()
 
 janela = ctk.CTk()
@@ -105,7 +110,7 @@ class Terminal(ctk.CTkTextbox):
     """Caixa de log no estilo terminal. escrever() funciona de qualquer thread."""
 
     def __init__(self, master, **kw):
-        super().__init__(master, fg_color="#0d0d0d", text_color="#00FF00",
+        super().__init__(master, fg_color=T["terminal"], text_color=T["terminal_texto"], corner_radius=8,
                          font=("Consolas", 12), wrap="word", **kw)
 
     def escrever(self, msg):
@@ -122,13 +127,20 @@ class PainelGrafico(ctk.CTkFrame):
     """Área de gráfico dentro da aba, com a barra do matplotlib (zoom, mover, salvar)."""
 
     def __init__(self, master, texto_inicial):
-        super().__init__(master, fg_color="white", corner_radius=8)
+        super().__init__(master, fg_color="#ffffff", corner_radius=12, border_width=1, border_color=T["borda"])
         self.fig = Figure(figsize=(7, 5), dpi=100)
         self.canvas = FigureCanvasTkAgg(self.fig, master=self)
         barra = NavigationToolbar2Tk(self.canvas, self, pack_toolbar=False)
         barra.update()
-        barra.pack(side="bottom", fill="x", padx=4, pady=(0, 4))
-        self.canvas.get_tk_widget().pack(fill="both", expand=True, padx=4, pady=4)
+        # Barra do matplotlib com o fundo branco do painel (a padrão é cinza)
+        for w in [barra, *barra.winfo_children()]:
+            try:
+                w.configure(background="#ffffff", highlightthickness=0)
+            except Exception:
+                pass
+        barra.pack(side="bottom", fill="x", padx=10, pady=(0, 8))
+        self.canvas.get_tk_widget().configure(highlightthickness=0)
+        self.canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=(10, 4))
         self.aviso(texto_inicial)
 
     def desenhar(self, funcao, *args, **kw):
@@ -145,10 +157,10 @@ class PainelGrafico(ctk.CTkFrame):
 
 def cartao(master, titulo):
     """Um bloco com título, para agrupar os controles."""
-    frame = ctk.CTkFrame(master, corner_radius=10)
+    frame = ctk.CTkFrame(master, corner_radius=12, fg_color=T["cartao"], border_width=1, border_color=T["borda"])
     frame.pack(fill="x", padx=6, pady=6)
-    ctk.CTkLabel(frame, text=titulo, font=ctk.CTkFont(size=13, weight="bold"),
-                 anchor="w").pack(fill="x", padx=12, pady=(8, 4))
+    ctk.CTkLabel(frame, text=titulo, font=ctk.CTkFont(size=13, weight="bold"), text_color=T["primaria"],
+                 anchor="w").pack(fill="x", padx=12, pady=(10, 4))
     return frame
 
 
@@ -166,8 +178,7 @@ def montar_aba(aba, texto_grafico, espaco_acima_do_grafico=False):
     linha_grafico = 1 if espaco_acima_do_grafico else 0
     aba.grid_columnconfigure(1, weight=1)
     aba.grid_rowconfigure(linha_grafico, weight=1)
-    # Cor explícita (e não "transparent"): evita cantos escuros ao trocar para o tema claro
-    esquerda = ctk.CTkScrollableFrame(aba, width=340, fg_color=tabview.cget("fg_color"))
+    esquerda = ctk.CTkScrollableFrame(aba, width=340, fg_color=T["superficie"])
     esquerda.grid(row=0, column=0, rowspan=2, sticky="nsw", padx=(0, 8))
     painel = PainelGrafico(aba, texto_grafico)
     painel.grid(row=linha_grafico, column=1, sticky="nsew")
@@ -179,26 +190,19 @@ def montar_aba(aba, texto_grafico, espaco_acima_do_grafico=False):
 # ==============================================================================
 cabecalho = ctk.CTkFrame(janela, fg_color="transparent")
 cabecalho.pack(fill="x", padx=20, pady=(12, 0))
-ctk.CTkLabel(cabecalho, text="🌱 AgroLIBS Studio", font=ctk.CTkFont(size=24, weight="bold")).pack(side="left")
+ctk.CTkLabel(cabecalho, text="🌱 AgroLIBS Studio", text_color=T["texto"],
+             font=ctk.CTkFont(size=24, weight="bold")).pack(side="left")
 ctk.CTkLabel(cabecalho, text=f"  v{VERSAO} · LIBS + quimiometria para fertilizantes NPK · Embrapa Instrumentação",
-             text_color="gray", font=ctk.CTkFont(size=13)).pack(side="left", pady=(6, 0))
+             text_color=T["suave"], font=ctk.CTkFont(size=13)).pack(side="left", pady=(6, 0))
 
-
-def trocar_tema(valor):
-    ctk.set_appearance_mode("Light" if valor == "☀️ Claro" else "Dark")
-
-
-seletor_tema = ctk.CTkSegmentedButton(cabecalho, values=["🌙 Escuro", "☀️ Claro"], command=trocar_tema)
-seletor_tema.set("🌙 Escuro")
-seletor_tema.pack(side="right")
-
-barra_status = ctk.CTkFrame(janela, height=28, corner_radius=0)
+barra_status = ctk.CTkFrame(janela, height=28, corner_radius=0, fg_color=T["cartao"])
 barra_status.pack(side="bottom", fill="x")
 label_status_geral = ctk.CTkLabel(barra_status, text="Pronto. Comece pela aba 1 (arquivos .esf) ou escolha uma pasta de .csv nas abas 2 a 5.",
                                   text_color=COR_NEUTRA, anchor="w")
 label_status_geral.pack(fill="x", padx=14)
 
-tabview = ctk.CTkTabview(janela)
+tabview = ctk.CTkTabview(janela, fg_color=T["superficie"], corner_radius=14, border_width=1,
+                         border_color=T["borda"])
 tabview.pack(pady=(4, 8), padx=20, fill="both", expand=True)
 aba_pre_conv = tabview.add("1 · Pré-processamento")
 aba_pca = tabview.add("2 · PCA")
@@ -218,15 +222,15 @@ class CartaoDados(ctk.CTkFrame):
     todos = []
 
     def __init__(self, master, ao_mudar, minimo=3):
-        super().__init__(master, corner_radius=10)
+        super().__init__(master, corner_radius=12, fg_color=T["cartao"], border_width=1, border_color=T["borda"])
         self.pack(fill="x", padx=6, pady=6)
         self.ao_mudar = ao_mudar
         self.minimo = minimo
         self.pasta = ""
         self.arquivos = []
 
-        ctk.CTkLabel(self, text="📂 Dados", font=ctk.CTkFont(size=13, weight="bold"),
-                     anchor="w").pack(fill="x", padx=12, pady=(8, 4))
+        ctk.CTkLabel(self, text="📂 Dados", font=ctk.CTkFont(size=13, weight="bold"), text_color=T["primaria"],
+                     anchor="w").pack(fill="x", padx=12, pady=(10, 4))
         ctk.CTkButton(self, text="Escolher pasta com os .csv tratados", command=self.escolher).pack(fill="x", padx=12, pady=3)
         self.label_pasta = ctk.CTkLabel(self, text="Nenhuma pasta selecionada.", text_color=COR_NEUTRA,
                                         wraplength=300, justify="left", anchor="w")
@@ -250,7 +254,7 @@ class CartaoDados(ctk.CTkFrame):
 
     def definir(self, pasta, contagem):
         self.pasta = pasta
-        self.label_pasta.configure(text=pasta, text_color=("gray20", "gray80"))
+        self.label_pasta.configure(text=pasta, text_color=T["texto"])
         if contagem[self.regiao()] == 0 and sum(contagem.values()) > 0:
             self.seletor_regiao.set("UV" if contagem["UV"] else "VIS")
         self.atualizar()
@@ -561,7 +565,7 @@ check_padronizar_pca.pack(anchor="w", padx=12, pady=4)
 ctk.CTkLabel(c, text="Desmarcado = só centrar na média: os picos pesam\nmais que o ruído e os loadings ficam mais legíveis.",
              text_color=COR_NEUTRA, font=ctk.CTkFont(size=11), justify="left", anchor="w").pack(fill="x", padx=12, pady=(0, 8))
 botao_gerar_pca = ctk.CTkButton(col_pca, text="🧠 Gerar PCA", command=acionar_motor_pca, state="disabled",
-                                fg_color=ROXO[0], hover_color=ROXO[1], height=38)
+                                fg_color=PRIMARIA[0], hover_color=PRIMARIA[1], height=38)
 botao_gerar_pca.pack(fill="x", padx=6, pady=6)
 label_resultado_pca = ctk.CTkLabel(col_pca, text="", justify="left", anchor="w", wraplength=320)
 label_resultado_pca.pack(fill="x", padx=10)
@@ -679,7 +683,7 @@ botao_quarentena = ctk.CTkButton(col_out, text="📦 2. Mover suspeitos para a Q
                                  state="disabled", fg_color=LARANJA[0], hover_color=LARANJA[1])
 botao_quarentena.pack(fill="x", padx=6, pady=4)
 botao_restaurar = ctk.CTkButton(col_out, text="↩ Restaurar quarentena (0)", command=restaurar_quarentena,
-                                state="disabled", fg_color="transparent", border_width=1)
+                                state="disabled", fg_color="transparent", border_width=1, text_color=T["texto"])
 botao_restaurar.pack(fill="x", padx=6, pady=4)
 
 
@@ -741,7 +745,7 @@ check_padronizar_var = ctk.CTkCheckBox(c, text="Padronizar (StandardScaler)")
 check_padronizar_var.select()
 check_padronizar_var.pack(anchor="w", padx=12, pady=(4, 10))
 botao_gerar_var = ctk.CTkButton(col_var, text="📈 Gerar curva de variância", command=acionar_motor_variancia,
-                                state="disabled", fg_color=AZUL[0], hover_color=AZUL[1], height=38)
+                                state="disabled", fg_color=PRIMARIA[0], hover_color=PRIMARIA[1], height=38)
 botao_gerar_var.pack(fill="x", padx=6, pady=6)
 c = cartao(col_var, "Resultado")
 label_resultado_var = ctk.CTkLabel(c, text="-", font=ctk.CTkFont(size=34, weight="bold"))
@@ -982,7 +986,7 @@ dica_modelo.pack(fill="x", padx=12, pady=(2, 10))
 trocar_modelo_clf()
 
 botao_treinar_clf = ctk.CTkButton(col_clf, text="🧠 Treinar e avaliar", command=treinar_clf, state="disabled",
-                                  fg_color=ROXO[0], hover_color=ROXO[1], height=38)
+                                  fg_color=PRIMARIA[0], hover_color=PRIMARIA[1], height=38)
 botao_treinar_clf.pack(fill="x", padx=6, pady=6)
 
 c = cartao(col_clf, "Acurácia (validação por amostra)")
