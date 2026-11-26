@@ -21,11 +21,12 @@ matplotlib.use("TkAgg")
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk  # noqa: E402
 from matplotlib.figure import Figure  # noqa: E402
 import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
 
 from modulos import dados, graficos, motor_classificacao, tema  # noqa: E402
 from modulos.conversor_arquivos import converter_pasta_esf_para_csv, listar_esf, tratar_espectro  # noqa: E402
 from modulos.pre_processador import carregar_arquivo_esf, identificar_picos_npk  # noqa: E402
-from modulos.motor_pca import calcular_pca  # noqa: E402
+from modulos.motor_pca import calcular_pca, dispersao_por_grupo  # noqa: E402
 from modulos.motor_outliers import detectar_outliers  # noqa: E402
 from modulos.motor_variancia import calcular_variancia  # noqa: E402
 from modulos.qualidade import SNR_MINIMO_PADRAO, TETO_SATURACAO_PADRAO, avaliar_tiro  # noqa: E402
@@ -377,7 +378,7 @@ def mostrar_preview(*_):
         usa = (check_savgol.get(), check_baseline.get(), check_normalizacao.get())
         tratado = tratar_espectro(wl, bruto, *map(bool, usa))
         tags = " + ".join(t for t, u in zip(("SG", "BL", "Norm"), usa) if u) or "nenhum filtro"
-        picos = identificar_picos_npk(wl, tratado)
+        picos = identificar_picos_npk(wl, tratado) if check_picos.get() else []
         painel_pre.desenhar(graficos.espectro_antes_depois, wl, bruto, tratado, nome, tags, picos)
         resumo = ", ".join(f"{el}: {sum(p['elemento'] == el for p in picos)}" for el in "NPK")
         label_picos.configure(text=f"Picos encontrados → {resumo}  ·  {len(wl)} pontos, {wl[0]:.1f}-{wl[-1]:.1f} nm")
@@ -494,7 +495,8 @@ c = cartao(col_pre, "2. Filtros (o gráfico atualiza na hora)")
 check_savgol = ctk.CTkCheckBox(c, text="Filtro Savitzky-Golay (janela 11, grau 2)", command=mostrar_preview)
 check_baseline = ctk.CTkCheckBox(c, text="Correção de baseline (polinômio grau 2)", command=mostrar_preview)
 check_normalizacao = ctk.CTkCheckBox(c, text="Normalização por área", command=mostrar_preview)
-for chk in (check_savgol, check_baseline, check_normalizacao):
+check_picos = ctk.CTkCheckBox(c, text="Marcar linhas N, P, K no gráfico", command=mostrar_preview)
+for chk in (check_savgol, check_baseline, check_normalizacao, check_picos):
     chk.select()
     chk.pack(anchor="w", padx=12, pady=4)
 label_picos = ctk.CTkLabel(c, text="", text_color=COR_NEUTRA, wraplength=300, justify="left", anchor="w")
@@ -545,7 +547,7 @@ terminal_conversao.pack(fill="x", padx=6, pady=(0, 6))
 # ==============================================================================
 # ABA 2: ANÁLISE PCA
 # ==============================================================================
-estado_pca = {"resultado": None, "grupos": None, "eixo": None, "regiao": ""}
+estado_pca = {"resultado": None, "grupos": None, "eixo": None, "regiao": "", "dispersao": None}
 opcoes_cor_pca = {}
 
 col_pca, painel_pca = montar_aba(aba_pca, "Escolha a pasta de .csv e clique em 'Gerar PCA'.")
@@ -572,7 +574,9 @@ def acionar_motor_pca():
 
     def terminou(r):
         res, grupos, eixo = r
-        estado_pca.update(resultado=res, grupos=grupos, eixo=eixo, regiao=regiao)
+        estado_pca.update(resultado=res, grupos=grupos, eixo=eixo, regiao=regiao,
+                          dispersao=dispersao_por_grupo(res["escores"], grupos))
+        mostrar_dispersao_pca()
         botao_gerar_pca.configure(state="normal")
         v = res["var_exp"]
         label_resultado_pca.configure(
@@ -588,6 +592,35 @@ def acionar_motor_pca():
         painel_pca.aviso(f"Erro no PCA:\n{erro}", cor=COR_ERRO)
 
     em_segundo_plano(tarefa, terminou, falhou)
+
+
+def mostrar_dispersao_pca():
+    """Tabela de homogeneidade de cada grupo (quanto menor, mais homogêneo)."""
+    disp = estado_pca["dispersao"]
+    texto_disp_pca.limpar()
+    if not disp:
+        botao_salvar_disp.configure(state="disabled")
+        return
+    texto_disp_pca.escrever("Dispersão no PC1 x PC2 (menor = mais homogêneo)\n"
+                            "grupo | n | raio | área 95% | Mahal. média / máx.")
+    for d in sorted(disp, key=lambda d: graficos.ordem_natural(d["grupo"])):
+        texto_disp_pca.escrever(f"{d['grupo']} | {d['n']} | {d['raio_euclidiano']:.3g} | "
+                                f"{d['area_elipse95']:.3g} | {d['mahal_medio']:.2f} / {d['mahal_maximo']:.2f}")
+    texto_disp_pca.escrever("\nMahalanobis com a covariância comum a todos os grupos (mesma régua).")
+    botao_salvar_disp.configure(state="normal")
+
+
+def salvar_dispersao_pca():
+    disp = estado_pca["dispersao"]
+    if not disp:
+        return
+    caminho = filedialog.asksaveasfilename(title="Salvar tabela de dispersão", defaultextension=".csv",
+                                           initialfile=f"dispersao_PCA_{estado_pca['regiao']}.csv",
+                                           filetypes=[("CSV", "*.csv")])
+    if not caminho:
+        return
+    pd.DataFrame(disp).to_csv(caminho, index=False, sep=";", decimal=",", float_format="%.6g")
+    status(f"Tabela de dispersão salva em {caminho}", COR_OK)
 
 
 def redesenhar_pca(*_):
@@ -628,6 +661,11 @@ botao_gerar_pca = ctk.CTkButton(col_pca, text="🧠 Gerar PCA", command=acionar_
 botao_gerar_pca.pack(fill="x", padx=6, pady=6)
 label_resultado_pca = ctk.CTkLabel(col_pca, text="", justify="left", anchor="w", wraplength=320)
 label_resultado_pca.pack(fill="x", padx=10)
+texto_disp_pca = Terminal(col_pca, height=170)
+texto_disp_pca.pack(fill="x", padx=6, pady=4)
+botao_salvar_disp = ctk.CTkButton(col_pca, text="💾 Salvar tabela de dispersão (.csv)", command=salvar_dispersao_pca,
+                                  state="disabled", fg_color="transparent", border_width=1, text_color=T["texto"])
+botao_salvar_disp.pack(fill="x", padx=6, pady=4)
 
 
 # ==============================================================================

@@ -92,34 +92,32 @@ def normalizar_por_area(comprimento_onda, intensidade):
     area_total = _integral(intensidade, comprimento_onda)
     return intensidade / area_total if area_total != 0 else intensidade
 
-def identificar_picos_npk(comprimentos_onda, intensidades, tolerancia=1.0, prom_frac=0.003):
+def identificar_picos_npk(comprimentos_onda, intensidades, tolerancia=0.5, prom_frac=0.02, distancia=10):
     """
-    Identificador ultra-sensível para N, P e K. 
-    Aumenta a tolerância para 1.0 nm e reduz drasticamente o prom_frac 
-    para capturar os picos fracos de Fósforo (P) na região do UV.
+    Identificador equilibrado para N, P e K (versão do Tomas de 14/08/2026).
+    Tolerância de 0,5 nm, proeminência mínima de 2% do pico mais alto e
+    distância mínima de 10 pontos entre picos, para o ruído não ser confundido
+    com linhas fracas nem gerar picos "gêmeos". A versão anterior (1,0 nm e
+    0,3%) marcava 20 ou mais picos por espectro, a maioria ruído.
     """
-    # prom_frac muito baixo (0.3% da altura máxima) para abraçar os picos baixos do Fósforo no UV
     prominencia_min = np.max(intensidades) * prom_frac
-    
-    # Reduzimos a distância para permitir picos múltiplos próximos (comum em doublets)
-    picos_idx, _ = find_peaks(intensidades, prominence=prominencia_min, distance=2)
+    picos_idx, _ = find_peaks(intensidades, prominence=prominencia_min, distance=distancia)
     picos_identificados = []
-    
+
     for idx in picos_idx:
         w_pico, i_pico = comprimentos_onda[idx], intensidades[idx]
         melhor_elemento, linha_ref, menor_diff = None, None, float('inf')
-        
+
         for elemento, linhas in ELEMENTS_WAVELENGTHS.items():
             for linha in linhas:
                 diff = abs(w_pico - linha)
-                # Tolerância de 1.0 nm para absorver pequenos desvios de calibração do espectrómetro no UV
                 if diff <= tolerancia and diff < menor_diff:
                     menor_diff, melhor_elemento, linha_ref = diff, elemento, linha
-                    
+
         if melhor_elemento:
             picos_identificados.append({
                 'index': idx, 'elemento': melhor_elemento, 'w_medido': w_pico,
                 'w_referencia': linha_ref, 'intensidade': i_pico, 'desvio': menor_diff
             })
-            
+
     return picos_identificados
