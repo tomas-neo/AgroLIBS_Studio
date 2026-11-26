@@ -682,7 +682,7 @@ def ao_mudar_dados_out(cartao_dados):
     opcoes_de_cor(menu_cor_out, cartao_dados, opcoes_cor_out)
     botao_gerar_out.configure(state="normal" if cartao_dados.pronto() else "disabled")
     botao_quarentena.configure(state="disabled")
-    q = dados.contar_quarentena(cartao_dados.pasta) if cartao_dados.pasta else 0
+    q = dados.contar_quarentena(cartao_dados.pasta, so_restauraveis=True) if cartao_dados.pasta else 0
     botao_restaurar.configure(text=f"↩ Restaurar quarentena ({q})", state="normal" if q else "disabled")
 
 
@@ -752,10 +752,16 @@ def enviar_para_quarentena():
 
 def restaurar_quarentena():
     pasta = dados_out.pasta
-    if not pasta or not messagebox.askyesno("Restaurar", "Devolver todos os arquivos da QUARENTENA para o lugar original?"):
+    if not pasta:
+        return
+    n_volta = dados.contar_quarentena(pasta, so_restauraveis=True)
+    n_ficam = dados.contar_quarentena(pasta) - n_volta
+    aviso = (f"\n\nOs {n_ficam} tiros reprovados no filtro de qualidade da Aba 1 (fracos ou saturados) "
+             "continuam na quarentena.") if n_ficam else ""
+    if not messagebox.askyesno("Restaurar", f"Devolver {n_volta} arquivos da QUARENTENA para o lugar original?{aviso}"):
         return
     n = dados.restaurar_quarentena(pasta)
-    texto_log_out.escrever(f"\n↩ {n} arquivos restaurados.")
+    texto_log_out.escrever(f"\n↩ {n} arquivos restaurados." + (f" {n_ficam} reprovados no filtro de qualidade ficaram na quarentena." if n_ficam else ""))
     definir_pasta_csv(pasta)
 
 
@@ -954,6 +960,8 @@ def treinar_clf():
         if res["curva_k"]:
             melhor_k = max(res["curva_k"], key=res["curva_k"].get)
             linhas.append(f"Melhor k na curva: {melhor_k} ({res['curva_k'][melhor_k] * 100:.1f}%)")
+            linhas.append("  (a curva usa as mesmas divisões da validação: escolher k pelo melhor ponto deixa a "
+                          "acurácia otimista; use a curva para ver se o resultado depende de k)")
         imp = motor_classificacao.importancia_rf(pacote)
         if imp is not None:
             linhas.append("Comprimentos de onda mais importantes:")

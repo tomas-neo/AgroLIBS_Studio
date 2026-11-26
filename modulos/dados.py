@@ -19,6 +19,7 @@ import pandas as pd
 
 PASTAS_DE_REGIAO = {"uv", "vis"}
 PASTA_QUARENTENA = "QUARENTENA"
+NOME_RELATORIO_QUALIDADE = "relatorio_qualidade.csv"   # o mesmo que modulos/conversor_arquivos.py usa
 
 # Grafias diferentes da mesma marca viram um nome só na legenda
 NOMES_BONITOS = {"maxgreen": "MaxGreen", "plantfertil": "PlantFertil", "corat": "Corat"}
@@ -206,17 +207,53 @@ def mover_para_quarentena(arquivos, pasta_raiz):
     return movidos
 
 
-def restaurar_quarentena(pasta_raiz):
-    """Devolve tudo o que está na QUARENTENA para o lugar original."""
+def reprovados_no_filtro(pasta_raiz):
+    """
+    Caminhos (relativos à QUARENTENA, com '/') dos .csv que o filtro de qualidade
+    da Aba 1 reprovou, lidos do relatorio_qualidade.csv. Vazio se não houver relatório.
+    """
+    relatorio = os.path.join(pasta_raiz, NOME_RELATORIO_QUALIDADE)
+    if not os.path.isfile(relatorio):
+        return set()
+    try:
+        df = pd.read_csv(relatorio, sep=";")
+    except Exception:
+        return set()
+    if "arquivo" not in df.columns or "aprovado" not in df.columns:
+        return set()
+    aprovado = df["aprovado"].astype(str).str.strip().str.lower().isin(["true", "1", "verdadeiro"])
+    # 'arquivo' é o .esf relativo à pasta de origem (ex.: "UV/a/tiro1.esf" ou "./tiro1.esf");
+    # na QUARENTENA ele está como .csv, no mesmo caminho relativo
+    return {os.path.normpath(os.path.splitext(str(a))[0] + ".csv").replace("\\", "/")
+            for a in df.loc[~aprovado, "arquivo"]}
+
+
+def _arquivos_da_quarentena(pasta_raiz, incluir_reprovados_filtro):
+    """(origem, caminho relativo) de cada arquivo da QUARENTENA que pode ser devolvido."""
     base = os.path.join(pasta_raiz, PASTA_QUARENTENA)
-    restaurados = 0
+    reprovados = set() if incluir_reprovados_filtro else reprovados_no_filtro(pasta_raiz)
     for root, _, files in os.walk(base):
         for f in files:
             origem = os.path.join(root, f)
-            destino = os.path.join(pasta_raiz, os.path.relpath(origem, base))
-            os.makedirs(os.path.dirname(destino), exist_ok=True)
-            os.replace(origem, destino)
-            restaurados += 1
+            relativo = os.path.relpath(origem, base).replace("\\", "/")
+            if relativo not in reprovados:
+                yield origem, relativo
+
+
+def restaurar_quarentena(pasta_raiz, incluir_reprovados_filtro=False):
+    """
+    Devolve para o lugar original o que está na QUARENTENA.
+    Por padrão, NÃO devolve os tiros reprovados no filtro de qualidade da Aba 1
+    (fracos ou saturados, listados no relatorio_qualidade.csv): restaurar os
+    outliers da Aba 3 não pode trazer de volta tiros sem plasma ou saturados.
+    """
+    base = os.path.join(pasta_raiz, PASTA_QUARENTENA)
+    restaurados = 0
+    for origem, relativo in list(_arquivos_da_quarentena(pasta_raiz, incluir_reprovados_filtro)):
+        destino = os.path.join(pasta_raiz, relativo)
+        os.makedirs(os.path.dirname(destino), exist_ok=True)
+        os.replace(origem, destino)
+        restaurados += 1
     # apaga as pastas vazias que sobraram
     for root, dirs, files in os.walk(base, topdown=False):
         if not os.listdir(root):
@@ -225,6 +262,14 @@ def restaurar_quarentena(pasta_raiz):
     return restaurados
 
 
-def contar_quarentena(pasta_raiz):
+def contar_quarentena(pasta_raiz, so_restauraveis=False):
+    """
+    Quantos arquivos estão na QUARENTENA. Com so_restauraveis=True, conta só os
+    que o 'Restaurar' devolveria (sem os reprovados no filtro de qualidade).
+    """
     base = os.path.join(pasta_raiz, PASTA_QUARENTENA)
-    return sum(len(fs) for _, _, fs in os.walk(base)) if os.path.isdir(base) else 0
+    if not os.path.isdir(base):
+        return 0
+    if so_restauraveis:
+        return sum(1 for _ in _arquivos_da_quarentena(pasta_raiz, incluir_reprovados_filtro=False))
+    return sum(len(fs) for _, _, fs in os.walk(base))

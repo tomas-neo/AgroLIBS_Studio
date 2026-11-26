@@ -39,8 +39,10 @@ def converter_pasta_esf_para_csv(pasta_origem, pasta_destino, usar_sg=True, usar
     qualidade: None (sem filtro) ou {'snr_minimo': 20, 'teto_saturacao': 578000}.
     Com o filtro, cada tiro é avaliado no espectro BRUTO (modulos/qualidade.py).
     Os reprovados também viram .csv, mas vão para <destino>/QUARENTENA (as abas
-    2 a 5 ignoram essa pasta, e o botão "Restaurar quarentena" da Aba 3 desfaz).
-    Todos os tiros ficam listados em <destino>/relatorio_qualidade.csv.
+    2 a 5 ignoram essa pasta, e o "Restaurar quarentena" da Aba 3 não os devolve:
+    para trazê-los de volta, rode o lote de novo sem o filtro).
+    Todos os tiros ficam listados em <destino>/relatorio_qualidade.csv (as linhas
+    de lotes anteriores convertidos para a mesma pasta são mantidas).
 
     Devolve (sucesso, falhas, mensagem, relatorio), em que relatorio é a lista
     de dicionários da avaliação (vazia sem filtro).
@@ -108,8 +110,19 @@ def converter_pasta_esf_para_csv(pasta_origem, pasta_destino, usar_sg=True, usar
     if relatorio:
         reprovados = [r for r in relatorio if not r['aprovado']]
         os.makedirs(pasta_destino, exist_ok=True)
-        pd.DataFrame(relatorio).to_csv(os.path.join(pasta_destino, NOME_RELATORIO_QUALIDADE),
-                                       index=False, sep=';', float_format='%.6g')
+        tabela = pd.DataFrame(relatorio)
+        caminho_relatorio = os.path.join(pasta_destino, NOME_RELATORIO_QUALIDADE)
+        # Outro lote convertido antes para a mesma pasta: mantém as linhas dele (o "Restaurar
+        # quarentena" da Aba 3 usa este relatório para não devolver os tiros reprovados)
+        if os.path.isfile(caminho_relatorio):
+            try:
+                anterior = pd.read_csv(caminho_relatorio, sep=';')
+                if 'arquivo' in anterior.columns:
+                    anterior = anterior[~anterior['arquivo'].isin(tabela['arquivo'])]
+                    tabela = pd.concat([anterior, tabela], ignore_index=True)
+            except Exception:
+                pass
+        tabela.to_csv(caminho_relatorio, index=False, sep=';', float_format='%.6g')
         mensagem += (f"\n🔎 Filtro de qualidade: {len(reprovados)} de {len(relatorio)} tiros na QUARENTENA "
                      f"({sum('fraco' in r['motivo'] for r in reprovados)} fracos, "
                      f"{sum('saturado' in r['motivo'] for r in reprovados)} saturados). "
