@@ -113,6 +113,33 @@ def espectro_antes_depois(fig, wl, bruto, tratado, nome, tags, picos):
     fig.tight_layout()
 
 
+def histograma_snr(fig, relatorio, snr_minimo, teto_saturacao):
+    """Distribuição da SNR dos tiros do lote (eixo log), com o limite escolhido."""
+    fig.clear()
+    ax = fig.add_subplot(111)
+    snr = np.array([max(r["snr"], 1e-1) for r in relatorio], dtype=float)
+    snr = np.where(np.isfinite(snr), snr, np.nanmax(snr[np.isfinite(snr)]) if np.isfinite(snr).any() else 1.0)
+    saturado = np.array(["saturado" in r["motivo"] for r in relatorio])
+    fraco = np.array(["fraco" in r["motivo"] for r in relatorio])
+    ok = ~(saturado | fraco)
+    bordas = np.logspace(np.log10(max(snr.min(), 0.5)) - 0.05, np.log10(snr.max()) + 0.05, 40)
+    ax.hist([snr[ok], snr[fraco & ~saturado], snr[saturado]], bins=bordas, stacked=True,
+            color=["#27ae60", COR_ALERTA, "#e67e22"],
+            label=[f"Aprovados ({ok.sum()})", f"Fracos ({(fraco & ~saturado).sum()})",
+                   f"Saturados ({saturado.sum()})"])
+    ax.set_xscale("log")
+    if snr_minimo:
+        ax.axvline(snr_minimo, color=COR_ALERTA, linestyle="--", linewidth=1.2)
+        ax.text(snr_minimo, 0.97, f" SNR mínima = {snr_minimo:g}", color=COR_ALERTA, fontsize=9,
+                va="top", transform=ax.get_xaxis_transform())
+    ax.set_xlabel("Relação sinal/ruído do tiro (escala log)")
+    ax.set_ylabel("Número de tiros")
+    teto = (" (teto " + f"{teto_saturacao:,.0f}".replace(",", ".") + ")") if teto_saturacao else ""
+    ax.set_title(f"Qualidade dos tiros: {(~ok).sum()} de {len(snr)} na quarentena{teto}")
+    ax.legend(loc="upper left", fontsize=9)
+    fig.tight_layout()
+
+
 # ==============================================================================
 # ABA 2: PCA
 # ==============================================================================

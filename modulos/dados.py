@@ -21,7 +21,7 @@ PASTAS_DE_REGIAO = {"uv", "vis"}
 PASTA_QUARENTENA = "QUARENTENA"
 
 # Grafias diferentes da mesma marca viram um nome só na legenda
-NOMES_BONITOS = {"maxgreen": "MaxGreen", "plantfertil": "PlantFertil"}
+NOMES_BONITOS = {"maxgreen": "MaxGreen", "plantfertil": "PlantFertil", "corat": "Corat"}
 
 
 # ==============================================================================
