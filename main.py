@@ -953,7 +953,9 @@ def treinar_clf():
             "=" * 50,
             f"Acurácia por espectro: {res['acuracia'] * 100:.1f}%",
             f"Acurácia por amostra (voto da maioria): {res['acuracia_por_amostra'] * 100:.1f}% "
-            f"({res['acertos_amostra']}/{res['total_amostras']} amostras)",
+            f"({res['acertos_amostra']}/{res['total_amostras']} amostras"
+            + (f"; {res['empates_amostra']} com empate no voto, contadas como erro" if res.get("empates_amostra") else "")
+            + ")",
             "",
             res["relatorio"],
         ]
@@ -979,7 +981,9 @@ def treinar_clf():
         acc = res["acuracia"] * 100
         label_acuracia.configure(text=f"{acc:.1f}%", text_color=COR_OK if acc >= 80 else COR_AVISO)
         label_acuracia_sub.configure(text=f"{nome}\npor amostra: {res['acuracia_por_amostra'] * 100:.1f}% "
-                                          f"({res['acertos_amostra']}/{res['total_amostras']})")
+                                          f"({res['acertos_amostra']}/{res['total_amostras']}"
+                                          + (f", {res['empates_amostra']} empate{'s' if res['empates_amostra'] > 1 else ''}" if res.get("empates_amostra") else "")
+                                          + ")")
         valores = ["Matriz de confusão"] + (["Acurácia × k"] if res["curva_k"] else []) + \
                   (["Importância"] if tipo == "RF" else [])
         seletor_grafico_clf.configure(values=valores)

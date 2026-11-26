@@ -128,15 +128,25 @@ def _numero_de_folds(y, grupos, maximo=5):
     return min(maximo, menor)
 
 
+def _voto_da_amostra(previstos):
+    """Classe com mais disparos; None se duas classes empatarem com o maior número."""
+    contagem = Counter(previstos).most_common()
+    if len(contagem) > 1 and contagem[0][1] == contagem[1][1]:
+        return None
+    return contagem[0][0]
+
+
 def _voto_por_amostra(y_true, y_pred, grupos):
-    """Classe final de cada amostra física = voto da maioria dos disparos."""
-    acertos, total = 0, 0
+    """Classe final de cada amostra física = voto da maioria dos disparos.
+    Um empate não é acerto: a amostra conta como erro e entra também em `empates`."""
+    acertos, total, empates = 0, 0, 0
     for g in set(grupos):
         m = grupos == g
-        voto = Counter(y_pred[m]).most_common(1)[0][0]
-        acertos += int(voto == y_true[m][0])
+        voto = _voto_da_amostra(y_pred[m])
+        empates += int(voto is None)
+        acertos += int(voto is not None and voto == y_true[m][0])
         total += 1
-    return acertos, total
+    return acertos, total, empates
 
 
 def avaliar_modelo(X, y, grupos, tipo, k=5, n_pcs=10, n_arvores=300,
@@ -177,7 +187,7 @@ def avaliar_modelo(X, y, grupos, tipo, k=5, n_pcs=10, n_arvores=300,
             y_pred[teste] = modelo.fit(X[treino], y[treino]).predict(X[teste])
 
     y_pred = y_pred.astype(str)
-    acertos_amostra, total_amostras = _voto_por_amostra(y, y_pred, grupos)
+    acertos_amostra, total_amostras, empates_amostra = _voto_por_amostra(y, y_pred, grupos)
     resultado = {
         "tipo": tipo,
         "classes": classes,
@@ -186,6 +196,7 @@ def avaliar_modelo(X, y, grupos, tipo, k=5, n_pcs=10, n_arvores=300,
         "acuracia_por_amostra": acertos_amostra / total_amostras,
         "acertos_amostra": acertos_amostra,
         "total_amostras": total_amostras,
+        "empates_amostra": empates_amostra,
         "matriz": confusion_matrix(y, y_pred, labels=classes),
         "relatorio": classification_report(y, y_pred, labels=classes, zero_division=0),
         "curva_k": {kk: acertos_por_k[kk] / len(y) for kk in valores_k if kk <= menor_treino},
@@ -215,8 +226,11 @@ def importancia_rf(pacote):
     return pacote["eixo"], pacote["modelo"].feature_importances_
 
 
-def linhas_npk_proximas(eixo, importancias, n=10, tolerancia=1.0):
-    """Os n comprimentos de onda mais importantes e se batem com alguma linha N/P/K."""
+def linhas_npk_proximas(eixo, importancias, n=10, tolerancia=0.15):
+    """Os n comprimentos de onda mais importantes e se batem com alguma linha N/P/K.
+    A tolerância é pequena de propósito: a 1 nm de uma linha de P ou K há linhas de
+    outros elementos (ex.: Zn 213,86 nm fica a 0,24 nm do P 213,62 nm), e só N, P e K
+    estão na lista; um pico sem marca pode ser de Ca, Mg, Fe, micronutrientes etc."""
     texto = []
     for idx in np.argsort(importancias)[::-1][:n]:
         wl = eixo[idx]
@@ -276,8 +290,14 @@ def classificar_pasta(pacote, pasta):
     if hasattr(modelo, "predict_proba"):
         df["confianca"] = modelo.predict_proba(X).max(axis=1)
 
+    def _classe_final(s):
+        cont = s.value_counts()
+        if len(cont) > 1 and cont.iloc[0] == cont.iloc[1]:   # empate: não escolhe sozinho
+            return "empate: " + " / ".join(sorted(map(str, cont.index[cont == cont.iloc[0]])))
+        return cont.index[0]
+
     resumo = (df.groupby("amostra")["classe_prevista"]
-                .agg(lambda s: s.value_counts().index[0])
+                .agg(_classe_final)
                 .rename("classe_final").to_frame())
     resumo["disparos"] = df.groupby("amostra").size()
     resumo["votos_na_classe"] = df.groupby("amostra")["classe_prevista"].agg(

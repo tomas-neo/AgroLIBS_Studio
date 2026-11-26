@@ -62,7 +62,7 @@ O software é dividido em 5 abas principais, simulando um pipeline completo de C
    * **KNN:** Padronização → PCA → KNN, com k e número de PCs ajustáveis, e curva de acurácia em função de k.
    * **Random Forest:** direto no espectro, com gráfico da importância de cada comprimento de onda e marcação das linhas de N, P e K.
    * Validação cruzada **agrupada por amostra física**: todos os disparos da `amostra_a` ficam juntos no treino ou no teste, para a acurácia não sair inflada.
-   * Matriz de confusão, relatório por classe e acurácia por amostra (voto da maioria dos disparos).
+   * Matriz de confusão, relatório por classe e acurácia por amostra (voto da maioria dos disparos; uma amostra com empate entre duas classes conta como erro e aparece como "empate" ao classificar amostras novas).
    * Salvar/carregar o modelo (`.joblib`) e classificar uma pasta de amostras novas (gera um `.csv` com a classe prevista de cada espectro).
 
 ---
