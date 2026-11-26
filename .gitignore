@@ -7,3 +7,9 @@ LIBS_PROCESSADOS_CSV/
 build/
 dist/
 *.spec
+
+# Dados locais (não sobem para o GitHub)
+teste.esf
+arquivos_brutos/
+RESULTADOS_LIBS/
+*_CSV_Tratados/

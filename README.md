@@ -1,10 +1,21 @@
-# AgroLIBS Studio V2.1 🔬🌱
+# AgroLIBS Studio V2.2 🔬🌱
 
 **AgroLIBS Studio** é uma aplicação desktop desenvolvida em Python para o pré-processamento e análise quimiométrica de espectros obtidos via Espectroscopia de Plasma Induzido por Laser (LIBS). O foco primário do software é a caracterização da variabilidade elementar de fertilizantes comerciais.
 
 Este projeto foi desenvolvido com uma arquitetura modular, separando a interface gráfica dos motores matemáticos, garantindo alta performance, blindagem contra erros de leitura e facilidade de manutenção.
 
 ---
+
+## 🚀 Novidades da Versão 2.2
+* **Filtro de qualidade dos tiros (Aba 1):** cada tiro é avaliado no espectro **bruto**, antes da normalização. Vão para a `QUARENTENA/` os tiros **fracos** (relação sinal/ruído abaixo do limite; padrão 20) e os **saturados** (algum pixel no teto do detector; padrão 578.000 contagens). O preview mostra a SNR do tiro atual, e no fim do lote aparece um histograma da SNR com o limite marcado. Tudo fica em `relatorio_qualidade.csv`, na pasta dos `.csv`.
+  * SNR = (pico mais alto − mediana do espectro) / ruído, com o ruído estimado pelo MAD da diferença entre pixels vizinhos (1,4826 × MAD / √2). Um tiro sem plasma dá SNR ≈ 5; tiros bons passam de 1000.
+  * Diferente do Isolation Forest da Aba 3, que sempre marca uma fração fixa, este filtro usa um limite físico e não depende de quantos tiros ruins existem no lote.
+  * O "Restaurar quarentena" da Aba 3 também devolve esses tiros.
+* **Homogeneidade de cada grupo no PCA (Aba 2):** depois do PCA, uma tabela mostra para cada grupo (marca, formulação...) o raio médio até o centro, a área da elipse de 95% e a distância de Mahalanobis média e máxima. Quanto menor, mais homogêneo o grupo. O botão "Salvar tabela" gera um `.csv` para o TCC.
+  * Vem da função de Mahalanobis da versão de agosto, com uma correção: lá cada grupo usava a própria covariância, e aí a distância média dá sempre ≈ 1,25, seja o grupo espalhado ou concentrado. Agora todos os grupos usam a covariância comum (a mesma régua).
+* **Marcação das linhas N, P, K mais limpa (Aba 1):** volta o identificador "equilibrado" da versão de agosto (tolerância de 0,5 nm, proeminência de 2% e 10 pontos entre picos), que marca cerca de 6 picos por espectro em vez de mais de 20, e uma caixa para ligar ou desligar a marcação.
+* A marca **Corat** aparece com o nome certo na legenda.
+* `.gitignore` com as pastas de dados locais (`RESULTADOS_LIBS/`, `arquivos_brutos/`, `*_CSV_Tratados/`).
 
 ## 🚀 Novidades da Versão 2.1
 * **Gráficos dentro do app:** todos os gráficos aparecem na própria aba, com a barra do matplotlib (zoom, mover, salvar PNG em 300 dpi, pronto para o TCC).

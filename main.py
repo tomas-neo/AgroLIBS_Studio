@@ -21,15 +21,17 @@ matplotlib.use("TkAgg")
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk  # noqa: E402
 from matplotlib.figure import Figure  # noqa: E402
 import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
 
 from modulos import dados, graficos, motor_classificacao, tema  # noqa: E402
 from modulos.conversor_arquivos import converter_pasta_esf_para_csv, listar_esf, tratar_espectro  # noqa: E402
 from modulos.pre_processador import carregar_arquivo_esf, identificar_picos_npk  # noqa: E402
-from modulos.motor_pca import calcular_pca  # noqa: E402
+from modulos.motor_pca import calcular_pca, dispersao_por_grupo  # noqa: E402
 from modulos.motor_outliers import detectar_outliers  # noqa: E402
 from modulos.motor_variancia import calcular_variancia  # noqa: E402
+from modulos.qualidade import SNR_MINIMO_PADRAO, TETO_SATURACAO_PADRAO, avaliar_tiro  # noqa: E402
 
-VERSAO = "2.1"
+VERSAO = "2.2"
 
 # Cores: vêm do tema (modulos/tema.py). Para testar outro: AGROLIBS_TEMA="Noite Azul" python main.py
 T = tema.aplicar(os.environ.get("AGROLIBS_TEMA"))
@@ -376,12 +378,39 @@ def mostrar_preview(*_):
         usa = (check_savgol.get(), check_baseline.get(), check_normalizacao.get())
         tratado = tratar_espectro(wl, bruto, *map(bool, usa))
         tags = " + ".join(t for t, u in zip(("SG", "BL", "Norm"), usa) if u) or "nenhum filtro"
-        picos = identificar_picos_npk(wl, tratado)
+        picos = identificar_picos_npk(wl, tratado) if check_picos.get() else []
         painel_pre.desenhar(graficos.espectro_antes_depois, wl, bruto, tratado, nome, tags, picos)
         resumo = ", ".join(f"{el}: {sum(p['elemento'] == el for p in picos)}" for el in "NPK")
         label_picos.configure(text=f"Picos encontrados → {resumo}  ·  {len(wl)} pontos, {wl[0]:.1f}-{wl[-1]:.1f} nm")
+        mostrar_qualidade_do_tiro(bruto)
     except Exception as e:
         painel_pre.aviso(f"Erro ao ler {nome}:\n{e}", cor=COR_ERRO)
+
+
+def config_qualidade():
+    """Limites do filtro de qualidade (None se o filtro estiver desligado)."""
+    if not check_qualidade.get():
+        return None
+    snr_min = ler_numero(entrada_snr, SNR_MINIMO_PADRAO, 0.0, 100000.0, float)
+    teto = ler_numero(entrada_teto, TETO_SATURACAO_PADRAO, 0.0, 1e9, float)
+    return {"snr_minimo": snr_min, "teto_saturacao": teto}
+
+
+def mostrar_qualidade_do_tiro(bruto=None):
+    """Mostra a nota do tiro do preview (SNR, máximo, aprovado ou não)."""
+    if bruto is None:
+        if not estado_pre["cache"]:
+            return
+        bruto = estado_pre["cache"][2]
+    cfg = config_qualidade()
+    nota = avaliar_tiro(bruto, *(cfg.values() if cfg else (None, None)))
+    texto = f"SNR {nota['snr']:.0f}  ·  máximo {nota['maximo']:,.0f}".replace(",", ".")
+    if cfg is None:
+        label_qualidade.configure(text=f"{texto}  (filtro desligado)", text_color=COR_NEUTRA)
+    elif nota["aprovado"]:
+        label_qualidade.configure(text=f"✅ {texto}: aprovado", text_color=COR_OK)
+    else:
+        label_qualidade.configure(text=f"❌ {texto}: {nota['motivo']} → iria para a QUARENTENA", text_color=COR_ERRO)
 
 
 def iniciar_processamento_em_lote():
@@ -398,6 +427,7 @@ def iniciar_processamento_em_lote():
             return
 
     usa_sg, usa_bl, usa_norm = bool(check_savgol.get()), bool(check_baseline.get()), bool(check_normalizacao.get())
+    qualidade = config_qualidade()
     terminal_conversao.limpar()
     barra_progresso.set(0)
     label_progresso.configure(text="Começando...")
@@ -412,15 +442,20 @@ def iniciar_processamento_em_lote():
     def tarefa():
         return converter_pasta_esf_para_csv(pasta_origem, pasta_destino, usar_sg=usa_sg, usar_baseline=usa_bl,
                                             usar_norm=usa_norm, callback=terminal_conversao.escrever,
-                                            progresso=progresso)
+                                            progresso=progresso, qualidade=qualidade)
 
     def terminou(resultado):
-        sucesso, falhas, _ = resultado
+        sucesso, falhas, _, relatorio = resultado
         botao_processar_tudo.configure(state="normal")
         botao_pasta_esf.configure(state="normal")
         cor = COR_OK if falhas == 0 else COR_ERRO
+        n_q = sum(not r["aprovado"] for r in relatorio)
         label_status_conv.configure(text=f"✅ {sucesso} salvos em {nome_pasta_origem}_CSV_Tratados"
-                                         + (f" ({falhas} falhas)" if falhas else ""), text_color=cor)
+                                         + (f" ({falhas} falhas)" if falhas else "")
+                                         + (f", {n_q} na QUARENTENA" if relatorio else ""), text_color=cor)
+        if relatorio:
+            painel_pre.desenhar(graficos.histograma_snr, relatorio, qualidade["snr_minimo"],
+                                qualidade["teto_saturacao"])
         if sucesso:
             dados.limpar_cache()
             definir_pasta_csv(pasta_destino)
@@ -460,13 +495,39 @@ c = cartao(col_pre, "2. Filtros (o gráfico atualiza na hora)")
 check_savgol = ctk.CTkCheckBox(c, text="Filtro Savitzky-Golay (janela 11, grau 2)", command=mostrar_preview)
 check_baseline = ctk.CTkCheckBox(c, text="Correção de baseline (polinômio grau 2)", command=mostrar_preview)
 check_normalizacao = ctk.CTkCheckBox(c, text="Normalização por área", command=mostrar_preview)
-for chk in (check_savgol, check_baseline, check_normalizacao):
+check_picos = ctk.CTkCheckBox(c, text="Marcar linhas N, P, K no gráfico", command=mostrar_preview)
+for chk in (check_savgol, check_baseline, check_normalizacao, check_picos):
     chk.select()
     chk.pack(anchor="w", padx=12, pady=4)
 label_picos = ctk.CTkLabel(c, text="", text_color=COR_NEUTRA, wraplength=300, justify="left", anchor="w")
 label_picos.pack(fill="x", padx=12, pady=(0, 8))
 
-c = cartao(col_pre, "3. Converter o lote inteiro para .csv")
+c = cartao(col_pre, "3. Filtro de qualidade dos tiros")
+check_qualidade = ctk.CTkCheckBox(c, text="Mandar tiros fracos e saturados para a QUARENTENA",
+                                  command=lambda: mostrar_qualidade_do_tiro())
+check_qualidade.select()
+check_qualidade.pack(anchor="w", padx=12, pady=4)
+l = linha(c)
+ctk.CTkLabel(l, text="SNR mínima:").pack(side="left")
+entrada_snr = ctk.CTkEntry(l, width=80)
+entrada_snr.insert(0, f"{SNR_MINIMO_PADRAO:g}")
+entrada_snr.pack(side="left", padx=8)
+l = linha(c)
+ctk.CTkLabel(l, text="Teto de saturação:").pack(side="left")
+entrada_teto = ctk.CTkEntry(l, width=90)
+entrada_teto.insert(0, f"{TETO_SATURACAO_PADRAO:.0f}")
+entrada_teto.pack(side="left", padx=8)
+for e in (entrada_snr, entrada_teto):
+    e.bind("<Return>", lambda *_: mostrar_qualidade_do_tiro())
+    e.bind("<FocusOut>", lambda *_: mostrar_qualidade_do_tiro())
+ctk.CTkLabel(c, text="Avalia o espectro BRUTO, antes de normalizar. Tiro sem plasma: SNR ≈ 5; "
+                     "tiros bons: acima de 1000. O histograma aparece no fim do lote.",
+             text_color=COR_NEUTRA, font=ctk.CTkFont(size=11), wraplength=300, justify="left",
+             anchor="w").pack(fill="x", padx=12)
+label_qualidade = ctk.CTkLabel(c, text="", text_color=COR_NEUTRA, wraplength=300, justify="left", anchor="w")
+label_qualidade.pack(fill="x", padx=12, pady=(2, 8))
+
+c = cartao(col_pre, "4. Converter o lote inteiro para .csv")
 botao_processar_tudo = ctk.CTkButton(c, text="▶ Processar lote inteiro", command=iniciar_processamento_em_lote,
                                      state="disabled", fg_color=VERDE[0], hover_color=VERDE[1], height=38)
 botao_processar_tudo.pack(fill="x", padx=12, pady=3)
@@ -486,7 +547,7 @@ terminal_conversao.pack(fill="x", padx=6, pady=(0, 6))
 # ==============================================================================
 # ABA 2: ANÁLISE PCA
 # ==============================================================================
-estado_pca = {"resultado": None, "grupos": None, "eixo": None, "regiao": ""}
+estado_pca = {"resultado": None, "grupos": None, "eixo": None, "regiao": "", "dispersao": None}
 opcoes_cor_pca = {}
 
 col_pca, painel_pca = montar_aba(aba_pca, "Escolha a pasta de .csv e clique em 'Gerar PCA'.")
@@ -513,7 +574,9 @@ def acionar_motor_pca():
 
     def terminou(r):
         res, grupos, eixo = r
-        estado_pca.update(resultado=res, grupos=grupos, eixo=eixo, regiao=regiao)
+        estado_pca.update(resultado=res, grupos=grupos, eixo=eixo, regiao=regiao,
+                          dispersao=dispersao_por_grupo(res["escores"], grupos))
+        mostrar_dispersao_pca()
         botao_gerar_pca.configure(state="normal")
         v = res["var_exp"]
         label_resultado_pca.configure(
@@ -529,6 +592,35 @@ def acionar_motor_pca():
         painel_pca.aviso(f"Erro no PCA:\n{erro}", cor=COR_ERRO)
 
     em_segundo_plano(tarefa, terminou, falhou)
+
+
+def mostrar_dispersao_pca():
+    """Tabela de homogeneidade de cada grupo (quanto menor, mais homogêneo)."""
+    disp = estado_pca["dispersao"]
+    texto_disp_pca.limpar()
+    if not disp:
+        botao_salvar_disp.configure(state="disabled")
+        return
+    texto_disp_pca.escrever("Dispersão no PC1 x PC2 (menor = mais homogêneo)\n"
+                            "grupo | n | raio | área 95% | Mahal. média / máx.")
+    for d in sorted(disp, key=lambda d: graficos.ordem_natural(d["grupo"])):
+        texto_disp_pca.escrever(f"{d['grupo']} | {d['n']} | {d['raio_euclidiano']:.3g} | "
+                                f"{d['area_elipse95']:.3g} | {d['mahal_medio']:.2f} / {d['mahal_maximo']:.2f}")
+    texto_disp_pca.escrever("\nMahalanobis com a covariância comum a todos os grupos (mesma régua).")
+    botao_salvar_disp.configure(state="normal")
+
+
+def salvar_dispersao_pca():
+    disp = estado_pca["dispersao"]
+    if not disp:
+        return
+    caminho = filedialog.asksaveasfilename(title="Salvar tabela de dispersão", defaultextension=".csv",
+                                           initialfile=f"dispersao_PCA_{estado_pca['regiao']}.csv",
+                                           filetypes=[("CSV", "*.csv")])
+    if not caminho:
+        return
+    pd.DataFrame(disp).to_csv(caminho, index=False, sep=";", decimal=",", float_format="%.6g")
+    status(f"Tabela de dispersão salva em {caminho}", COR_OK)
 
 
 def redesenhar_pca(*_):
@@ -569,6 +661,11 @@ botao_gerar_pca = ctk.CTkButton(col_pca, text="🧠 Gerar PCA", command=acionar_
 botao_gerar_pca.pack(fill="x", padx=6, pady=6)
 label_resultado_pca = ctk.CTkLabel(col_pca, text="", justify="left", anchor="w", wraplength=320)
 label_resultado_pca.pack(fill="x", padx=10)
+texto_disp_pca = Terminal(col_pca, height=170)
+texto_disp_pca.pack(fill="x", padx=6, pady=4)
+botao_salvar_disp = ctk.CTkButton(col_pca, text="💾 Salvar tabela de dispersão (.csv)", command=salvar_dispersao_pca,
+                                  state="disabled", fg_color="transparent", border_width=1, text_color=T["texto"])
+botao_salvar_disp.pack(fill="x", padx=6, pady=4)
 
 
 # ==============================================================================
