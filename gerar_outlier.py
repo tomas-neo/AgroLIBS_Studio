@@ -24,7 +24,7 @@ if caminho_real:
     # 1. Lê o arquivo original (mesmo formato que a Aba 1 grava: separador ';')
     eixo, intensidade = ler_csv(caminho_real)
     if intensidade is None:
-        raise SystemExit("Esse .csv não tem coluna de intensidade.")
+        raise SystemExit("Esse .csv não é um espectro (faltam as colunas de comprimento de onda e intensidade).")
 
     # 2. "Estraga" os dados para criar uma anomalia gigantesca!
     # Multiplica a intensidade por 50 e soma um ruído do tamanho do sinal

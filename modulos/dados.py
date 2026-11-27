@@ -39,7 +39,11 @@ def listar_csvs(pasta_raiz, regiao):
         # Não desce na quarentena nem em pastas ocultas
         dirs[:] = [d for d in dirs if d != PASTA_QUARENTENA and not d.startswith(".")]
         for f in files:
-            if not f.lower().endswith(".csv") or f.lower().startswith("classificacao_"):
+            nome = f.lower()
+            # Fora: resultados de classificação e as tabelas de picos do script antigo
+            # (*_picos_identificados.csv), que não são espectros.
+            if (not nome.endswith(".csv") or nome.startswith("classificacao_")
+                    or nome.endswith("_picos_identificados.csv")):
                 continue
             caminho = os.path.join(root, f)
             if regiao.lower() in [p.lower() for p in _partes(caminho, pasta_raiz)[:-1]]:
@@ -102,18 +106,17 @@ def grupo_do_arquivo(caminho, pasta_raiz, niveis):
 # 3. LER ESPECTROS
 # ==============================================================================
 def ler_csv(caminho):
-    """Lê um .csv tratado (aceita ';' ou ','). Devolve (x, y) ou (None, None)."""
+    """Lê um .csv tratado (aceita ';' ou ','). Devolve (x, y) ou (None, None).
+    Sem coluna de comprimento de onda não é um espectro (ex.: tabela de picos): (None, None)."""
     df = pd.read_csv(caminho, sep=";")
     if len(df.columns) == 1:
         df = pd.read_csv(caminho, sep=",")
     col_x = next((c for c in df.columns if "onda" in c.lower() or "wave" in c.lower()
                   or "lambda" in c.lower()), None)
     col_y = next((c for c in df.columns if "intens" in c.lower()), None)
-    if col_y is None:
+    if col_y is None or col_x is None:
         return None, None
-    y = df[col_y].to_numpy(dtype=float)
-    x = df[col_x].to_numpy(dtype=float) if col_x else np.arange(len(y), dtype=float)
-    return x, y
+    return df[col_x].to_numpy(dtype=float), df[col_y].to_numpy(dtype=float)
 
 
 _cache = OrderedDict()   # (arquivos + datas de modificação) -> resultado
@@ -150,7 +153,7 @@ def _carregar_espectros(arquivos, callback):
         x, y = ler_csv(arq)
         if y is None or len(y) < 10:
             if callback:
-                callback(f"  ⚠️ Ignorado (sem coluna de intensidade): {os.path.basename(arq)}")
+                callback(f"  ⚠️ Ignorado (não é espectro: falta a coluna de comprimento de onda ou de intensidade): {os.path.basename(arq)}")
             continue
         if np.any(np.diff(x) < 0):
             ordem = np.argsort(x)
@@ -161,7 +164,7 @@ def _carregar_espectros(arquivos, callback):
             callback(f"  ... {i + 1}/{len(arquivos)} arquivos lidos")
 
     if not espectros:
-        raise ValueError("Nenhum espectro válido encontrado (falta a coluna de intensidade?).")
+        raise ValueError("Nenhum espectro válido encontrado (faltam as colunas de comprimento de onda e intensidade?).")
 
     x_ref = espectros[0][0]
     if all(len(x) == len(x_ref) and np.allclose(x, x_ref) for x, _ in espectros):
@@ -172,7 +175,11 @@ def _carregar_espectros(arquivos, callback):
         fim = min(x[-1] for x, _ in espectros)
         eixo = x_ref[(x_ref >= inicio) & (x_ref <= fim)]
         if len(eixo) < 10:
-            raise ValueError("Os espectros não têm uma faixa de comprimento de onda em comum.")
+            curto = min(espectros, key=lambda e: e[0][-1] - e[0][0])
+            arq_curto = os.path.basename(usados[[id(e) for e in espectros].index(id(curto))])
+            raise ValueError("Os espectros não têm uma faixa de comprimento de onda em comum "
+                             f"(ex.: {arq_curto} vai de {curto[0][0]:.1f} a {curto[0][-1]:.1f} nm). "
+                             "Confira se a pasta mistura UV e VIS ou arquivos que não são espectros.")
         X = np.vstack([np.interp(eixo, x, y) for x, y in espectros])
         if callback:
             callback(f"  Eixos diferentes entre arquivos: tudo interpolado em {eixo[0]:.1f}-{eixo[-1]:.1f} nm")
